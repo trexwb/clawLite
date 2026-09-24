@@ -265,6 +265,12 @@ async function checkUpdate() {
 /* ── 启动 ──────────────────────────────────────────────────────── */
 
 async function boot() {
+  // macOS 桌面端顶栏需为原生交通灯预留左侧安全区
+  // （与 main.cjs 的 trafficLightPosition 配套，样式见 main.css 的 --topbar-gutter）
+  if (IS_DESKTOP && /Mac/i.test(navigator.userAgent)) {
+    document.body.classList.add('is-mac')
+  }
+
   bind()
 
   if (!IS_DESKTOP) {

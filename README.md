@@ -62,6 +62,12 @@ CLAWLITE_DEV_SERVER=http://localhost:1420 npm run electron
 > macOS 限制：应用从 DMG 只读卷直接运行时，系统不允许其拉起内置运行时。
 > 应用已内置检测，遇到这种情况会主动提示并引导你完成拖入步骤。
 
+> **仍无法打开 / 想一步解除 Gatekeeper 拦截？** 在「终端」执行以下命令移除下载隔离标记（quarantine）后，从「应用程序」重新打开即可：
+> ```bash
+> xattr -dr com.apple.quarantine "/Applications/clawLite.app"
+> ```
+> 该命令仅清除系统给应用打的隔离属性，不修改应用内容；路径需与实际安装包名一致（若按 `productName` 命名为 `Claw Lite.app`，则使用 `/Applications/Claw Lite.app`）。
+
 ## 打包
 
 ```bash

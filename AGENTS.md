@@ -49,7 +49,7 @@ Claw Lite 是 DeepSeek Harness（dsh）的桌面宿主：内置 Electron 自带 
 - **渲染层为普通 Vite 模块构建**：本项目渲染层通过 `BrowserWindow` 加载（Electron 支持 `file://` 下的 `<script type="module">`），**不需要**像纯 `file://` SPA 那样强制 `iife` 或 `demoteModuleScripts()` 降级插件。改动 Vite 配置前必须确认不会破坏 `npm run build:web` 产物在 Electron 内的加载。
 - **产物验证标准**：修改后的项目必须在 `npm run build:web` 成功后，经 `npm start`（或 `npm run dev` + `CLAWLITE_DEV_SERVER` + `npm run electron`）在 Electron 内完整加载并正常交互；自检必须 `npm run check` 全绿。
 - **禁止引入额外运行时依赖**：渲染层保持纯原生 JS（无 React/Vue/jQuery/lodash 等）；主进程仅允许 `electron` 与 `electron-updater` 作为运行时依赖（`dependencies`/`devDependencies` 中不得出现 Tauri 残留，详见 `scripts/check.mjs` §6）。
-- **静态资源路径**：渲染层引用资源须使用相对路径；当前渲染层仅依赖 `src/styles/main.css` 与系统字体栈（无外部字体/图标 CDN）。
+- **静态资源路径**：渲染层引用资源须使用相对路径；当前渲染层仅依赖 `src/styles/main.css` 与系统字体栈（无外部字体/图标 CDN），顶栏品牌图标引用项目图标资源 `build/icon.png`（由 Vite 构建时复制到 `dist/assets/`）。
 
 > 以上约束适用于所有 Sub-Agent（file-agent、browser-agent、computer-agent 等），无论其在何种上下文中执行任务，均不得以任何理由违反。
 

@@ -42,6 +42,9 @@ function createMainWindow() {
     icon: iconPath(),
     show: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // macOS 专用（其他平台忽略）：把交通灯固定在 62px 顶栏内垂直居中、靠左留白，
+    // 与渲染层 body.is-mac 下的 --topbar-gutter 左侧安全区配套，避免与品牌标题重叠
+    trafficLightPosition: { x: 16, y: 24 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -343,8 +346,11 @@ if (!app.requestSingleInstanceLock()) {
     buildMenu()
     createMainWindow()
 
+    // autoStart：与窗口创建并行拉起 dsh，重叠其冷启动与窗口渲染，
+    // 缩短 autoStart 场景下「DSH 就绪」的体感耗时。harness.start 不依赖主窗口，
+    // 启动期间的 state 广播在无窗口时自动 no-op，渲染层 boot 时通过 snapshot 拉取当前态。
     if (harness.settings.autoStart) {
-      setTimeout(() => harness.start(), 800)
+      harness.start()
     }
 
     app.on('activate', () => {
