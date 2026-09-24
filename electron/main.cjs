@@ -12,6 +12,27 @@ const fs = require('node:fs')
 const { HarnessManager } = require('./harness.cjs')
 const { SettingsStore } = require('./settings.cjs')
 
+// 启动性能：禁用后台节流，避免窗口被遮挡时 dsh 子进程 / 渲染层定时器被降速
+app.commandLine.appendSwitch('disable-background-timer-throttling')
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
+app.commandLine.appendSwitch('disable-renderer-backgrounding')
+
+// 启动埋点：进程启动为 T0，关键阶段打点写入 userData/startup.log 并打印，便于量化启动耗时
+const PERF_T0 = Date.now()
+const _perfMarked = new Set()
+function perfMark(phase) {
+  if (_perfMarked.has(phase)) return
+  _perfMarked.add(phase)
+  const dt = Date.now() - PERF_T0
+  console.log(`[claw-lite][perf] ${phase} +${dt}ms`)
+  try {
+    fs.appendFileSync(
+      path.join(app.getPath('userData'), 'startup.log'),
+      `[${new Date().toISOString()}] perf ${phase} +${dt}ms\n`
+    )
+  } catch {}
+}
+
 const APP_ROOT = path.join(__dirname, '..')
 const DEV_SERVER = process.env.CLAWLITE_DEV_SERVER || ''
 
@@ -54,7 +75,10 @@ function createMainWindow() {
     },
   })
 
-  mainWindow.once('ready-to-show', () => mainWindow.show())
+  mainWindow.once('ready-to-show', () => {
+    perfMark('window-ready')
+    mainWindow.show()
+  })
 
   if (!app.isPackaged && DEV_SERVER) {
     mainWindow.loadURL(DEV_SERVER)
@@ -117,7 +141,10 @@ function broadcast(channel, payload) {
 }
 
 function wireHarness() {
-  harness.on('state', (snap) => broadcast('harness:state', snap))
+  harness.on('state', (snap) => {
+    if (snap.state === 'running') perfMark('dsh-ready')
+    broadcast('harness:state', snap)
+  })
   harness.on('log', (line) => broadcast('harness:log', line))
 }
 
@@ -296,6 +323,7 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(async () => {
+    perfMark('app-ready')
     // macOS：应用从 DMG 只读卷（或 App Translocation 临时路径）直接运行时，
     // 系统不允许其拉起内置运行时。这里引导用户完成标准安装步骤（拖入「应用程序」）。
     if (process.platform === 'darwin' && app.isPackaged) {
