@@ -68,6 +68,44 @@
 - **验证**：`npm run check` 全绿（新增校验项 PASS，5 个状态对齐；1 项告警为本地未拉取内置 DSH 运行时，与本次改动无关）；`node --check` 覆盖全部 `electron/`、`src/`、`scripts/` 脚本通过；渲染层构建验证通过（借用本机其它项目已装的 Vite：`5 modules transformed`，`dist/index.html` 引用 `./assets/...` 相对路径，`base: './'` 未改动）。本仓库未安装 devDependencies（无 `node_modules`），`npm run build:web` 需先执行 `npm install`。
 - 版本号维持 **v1.0.0**（同日同模块缺陷修复，按 §0 不推进版本号）。
 
+### 二次审计修复 C1/R2/R1（2026-09-24 · 不推进版本号）
+
+- **背景**：修复后二次五轴审计，缺陷清单为 1 Critical / 4 Required / 8 Optional / 7 Nit / 3 FYI。本轮修复 C1、R2、R1 三项。
+- **C1 停止态失配 → 竞态下误报已停止 / 新进程被误杀**：`stop()` 虽已声明 `stopping` 状态，却仍复用 `setState('starting', '正在停止…')`，致渲染层 `busy`（依赖 `state === 'stopping'`）在整个停止窗口恒为假——「停止→启动」按钮解禁即可能产生孤儿子进程；渲染层 `STATE_LABEL.stopping` 与 CSS `.pill.stopping` / `.dot.stopping` 也始终是死代码。同时 `start()` 在停止未收尾时仍可重入，两段流程互相覆盖 `child` 句柄，且超时强制结束沿用 `this.child` 会杀掉刚起来的新进程、收尾无条件置 `stopped` 会误报已停止。现三处收口：① `stop()` 置入 `stopping` 态，并在收尾解除 `_stopping`（无子进程的早退分支同样解除）；② `start()` 增加 `_stopping` 重入闸门，停止未收尾一律拒绝启动；③ 强杀改为本次捕获的 `child`（`timedOut && this.child === child`），收尾前以 `this.child !== child` 早退，不覆盖接管进程的状态与 URL。至此 `stopping` 全链路（主进程 → 快照 → `STATE_LABEL` → CSS）真实可达，自检的状态枚举对齐项由 5 项升至 6 项。
+- **R2 启动探活期无取消入口**：子进程起来后探活最长 60s，该窗口内所有按钮禁用，用户只能干等超时。现快照新增 `canStop`（`!!this.child`），渲染层在 `starting && canStop` 时放行「停止」，可发信号中止本次启动（`waitForReady` 在 ≤400ms 轮询内因 `this.child !== child` 返回，状态由退出事件落 `stopped`）；启动按钮不再自行弹「正在启动 DSH 服务…」提示，改由 `harness:state` 快照驱动，避免取消后仍弹启动提示。浏览器预览模式的占位快照同步补 `canStop: false`。
+- **R1 主窗口缺 `will-navigate` 守卫**：主窗口仅挂 `setWindowOpenHandler`（只挡 `window.open`），页内 self 导航（如把文件拖入窗口）可把挂有 preload 的主窗口导航到外部来源，等于交出 `window.clawLite` 暴露面。现新增 `will-navigate` 守卫：打包态仅放行入口页 `dist/index.html` 本体（`sameFilePath` 按平台归一化比对，兼容 Windows 的 `/C:/…` 形态与大小写），开发态仅放行 `DEV_SERVER` 同源，其余 `preventDefault()` 并交系统浏览器。
+- **已知残留**：`stop()` 若落在「端口分配 / 数据目录准备」这一极短窗口（尚无子进程）仍无进程可终止——该窗口渲染层不提供「停止」按钮，仅菜单项可触发，且会如实回到 `stopped`。如需彻底覆盖可在 `start()` 内引入取消标记，本轮按最小改动未引入。
+- **文档同步**：`AGENTS.md` §4「状态机」（`stopping` 来源与探活期可取消）、§8「按钮可用性」、§11「受信任内容窗口导航加固」（扩展至主窗口）同步。
+- **验证**：`node --check` 覆盖 `electron/harness.cjs` / `electron/main.cjs` / `src/main.js` / `electron/preload.cjs` 全部通过；`node scripts/check.mjs` 全绿（状态枚举对齐 6 项、IPC 三层 12 通道 / 2 事件 / 12 方法，仅 1 WARN 为本地未拉取内置 DSH 运行时，与本次改动无关）。
+- 版本号维持 **v1.0.0**（同日同模块缺陷修复，按 §0 不推进版本号）。
+
+### 二次审计 R4/R3/O1–O8/F1 门禁与其余项修复（2026-09-24 · 不推进版本号）
+
+- **背景**：延续「二次审计修复 C1/R2/R1」，本轮按既定次序处理剩余全部条目——R4、R3、O1–O8 与 7 项 Nit、F1 门禁补齐。
+- **R4 端口校验三处不一致 → 单一来源**：`index.html` 输入框为 1024–65535、`main.cjs` IPC 校验为 1–65535、渲染层 `Number(el.fPort.value) || 8799` 又会把 `0`/空/非法值静默改写成 8799。现将范围收敛到 `harness.cjs` 单一来源（新增并导出 `PORT_MIN = 1024` / `PORT_MAX = 65535` / `PORT_DEFAULT = 8799`），`pickPort` 钳制、`settings` 默认值、`main.cjs` 的 `harness:saveSettings` 校验、渲染层 `readPort()` 全部改用该来源；渲染层对非法输入显式回显「监听端口需为 1024-65535 的整数」，去掉 `||` 兜底。新增自检 §9 断言 `index.html` ↔ `harness.cjs` ↔ `src/main.js` 三方一致。
+- **R3 文档与实现对齐**（随 C1 已修）：`AGENTS.md` §4 状态机条目改为双向可达表述（`setState` 取值 ⊆ 标签，且标签 ⊆ 取值，多出即死枚举），并注明校验由 `scripts/check.mjs` §7 承担；实测 6 个状态全部可达。
+- **O1 次要文字对比度不足**：`--text-faint` 由 `#6b7383`（card 上 3.65:1，未达 AA）提到 `#7f8899`（4.88:1）；该令牌承载 11.5–12.5px 字段标签、卡片标题等小字。
+- **O2 双 live region 重复播报**：`#status-pill` 去掉 `role="status" aria-live="polite"`，状态播报统一由状态主卡 `#hero-text` 承担；日志区保留 `role="log"` 但 `aria-live="off"`，避免逐行追加持续打断读屏。新增自检 §10 断言「播报区唯一」「日志区不播报」。
+- **O3 toast 在 `display:none` 下赋值**：`toast()` 改为先 `classList.remove('hidden')` 再写 `textContent`，保证元素已在可访问树内，部分读屏不会漏播。
+- **O4 reduced-motion 覆盖不全**：补 `.btn` / 输入控件的 `transition: none` 与 `.btn:active` 的 `transform: none`，与注释声明的「精确覆盖在用动效」对齐。
+- **O5 日志逐行重排**：日志写入改为 `logQueue` + `requestAnimationFrame`（`flushLog`）合并，一帧内只做一次 `DocumentFragment` 追加与一次裁剪 / 滚动定位；`rebuildLog()` 重建前取消在帧任务并清空队列，避免重建后又被旧行追加。
+- **O6 保存后未提示生效时机**：服务运行 / 启动探活期间保存设置时，toast 改为「设置已保存，将在下次启动 DSH 时生效」（端口等仅在下一次 spawn 读取）。
+- **O7 `classify()` 误染红**：英文关键词要求「独立词 + 前置分隔符」（`ERR_WORD_RE`），中文 `错误`/`失败` 单独匹配（`ERR_CJK_RE`）。原 `/error/i` 会把 `/path/error-handler.js`、`token=errorless` 染成错误色。
+- **O8 CSP `unsafe-inline` 说明**：`style-src` 的 `'unsafe-inline'` 确认为 Vite 开发模式注入 `<style>`（HMR）所必需，故不放宽脚本侧、也不在构建态特殊处理；改为在 `index.html`、`AGENTS.md` §4 显式注明来源与边界，并新增 §10 硬断言（`script-src` 仅 `'self'`、`connect-src` 仅 `'self'`）。
+- **Nit 1 死样式**：移除 `main.css` 中 `classify()` 永不产出的 `.log .l-ok`；`--card-hover` 由 `#1c2029`（与 `--card` 差值极小、悬停不可辨）提亮为 `#222834`。
+- **Nit 2 命令名误导**：`src/main.js` 的 `COMMANDS` 中 `harness_install`（实际映射 `api.verify()`）改名为 `harness_verify`，与通道 `harness:verify`、按钮语义一致。
+- **Nit 3 回填不一致**：`el.fOpenMode.value` 回填补 `activeElement` 聚焦保护，与 `port`/`workspace`/`dshHome` 一致。
+- **Nit 4 窗口几何写盘静默失败**：`persistNow()` 检查 `store.save()` 返回值，失败时写运行日志（`⚠ 窗口位置写入失败`）。
+- **Nit 5 `broadcast` 群发**：收窄为仅推主窗口，不再把 `harness:state`/`harness:log` 外送到被托管的 dsh Web UI 窗口。
+- **Nit 6 菜单 / autoStart 无 catch + 缺全局兜底**：新增 `safeHarness(action)`（同步 try/catch + 返回 Promise 的 catch 兜底），菜单三项与 autoStart 改走该包装；主进程注册 `process.on('unhandledRejection')` 作为最后一道网（落 `console.error` 与运行日志）。
+- **Nit 7 文档滞后**：`README.md` 自检清单补齐 §7–§10 校验项与 `verify:dist`，配置表端口行补充范围；`AGENTS.md` §5 目录、§6 关键函数（`safeHarness`/`readPort`/`flushLog`/`classify`）、§11.2 图片、§11.4 console 豁免、§11.6 日志批处理、§12 自检与 CI 同步。
+- **F1 门禁补齐（`scripts/check.mjs`）**：§7 状态枚举由单向包含改为**双向可达**（新增「无死枚举」断言，C1 类缺陷此后必被红灯拦下）；§8 新增日志着色类名 ↔ `main.css` **双向交叉**（同时拦死样式与死类名）；§9 新增端口范围**三方一致**；§10 新增**安全与无障碍基线硬断言**（`webPreferences` 逐块断言 `sandbox`/`contextIsolation`/`nodeIntegration:false`、CSP 脚本侧未放宽、`connect-src` 仅 `'self'`、播报区唯一、日志区不播报）。
+- **F2 产物校验**：新增 `scripts/verify-dist.mjs`（`npm run verify:dist`），断言 `dist/index.html` 资源引用为相对路径、品牌图标真实产出到 `dist/assets/` 且被引用；CI 在 `build:web` 之后新增该步骤。
+- **F3 埋点与规范张力**：`AGENTS.md` §11.4 显式豁免 `perfMark()` 启动埋点与 `unhandledRejection` 的 `console.error`。
+- **已知边界**：`sandbox: true` 下渲染层不再有 Node 能力（本项目渲染层纯 DOM 操作，无回归）；O8 未在构建态剥离 `unsafe-inline`（需实机验证 dev HMR，改动收益小于风险）。
+- **验证**：`node --check` 覆盖 `electron/`、`src/`、`scripts/` 全部脚本通过；`node scripts/check.mjs` 全绿（状态枚举双向 6 项可达、着色类名 2 项交叉、端口三方一致、安全基线全 PASS；仅 1 WARN 为本地未拉取内置 DSH 运行时）；`node scripts/verify-dist.mjs` 通过（`dist/assets/icon-DYtyWVWp.png` 已产出并被引用）。
+- 版本号维持 **v1.0.0**（同日同模块缺陷修复，按 §0 不推进版本号）。
+
 ---
 
 > 后续迭代分节追加于此文件顶部，格式同上（日期 + 状态 + 版本号是否推进的说明）。

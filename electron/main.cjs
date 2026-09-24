@@ -9,7 +9,7 @@ const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 
-const { HarnessManager } = require('./harness.cjs')
+const { HarnessManager, PORT_MIN, PORT_MAX } = require('./harness.cjs')
 const { SettingsStore } = require('./settings.cjs')
 
 // 启动性能：禁用后台节流，避免窗口被遮挡时 dsh 子进程 / 渲染层定时器被降速
@@ -35,6 +35,28 @@ function perfMark(phase) {
 
 const APP_ROOT = path.join(__dirname, '..')
 const DEV_SERVER = process.env.CLAWLITE_DEV_SERVER || ''
+const MAIN_ENTRY = path.join(APP_ROOT, 'dist', 'index.html')
+
+/** 仅用于导航白名单比对的路径归一化（Windows 的 file:// pathname 形如 /C:/…） */
+function sameFilePath(urlPath, absPath) {
+  const a = decodeURIComponent(urlPath).replace(/^\/+/, '').replace(/\\/g, '/')
+  const b = absPath.replace(/\\/g, '/')
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+}
+
+/**
+ * 主窗口允许停留的地址：开发态为 DEV_SERVER 同源，其余为 dist/index.html。
+ * 与 createMainWindow 的加载分支保持一致。
+ */
+function isMainWindowNavAllowed(target) {
+  try {
+    const u = new URL(target)
+    if (!app.isPackaged && DEV_SERVER) return u.origin === new URL(DEV_SERVER).origin
+    return u.protocol === 'file:' && sameFilePath(u.pathname, MAIN_ENTRY)
+  } catch {
+    return false
+  }
+}
 
 let mainWindow = null
 let webWindow = null
@@ -92,7 +114,10 @@ function createMainWindow() {
   let persistTimer = null
   const persistNow = () => {
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) return
-    store.save({ windowBounds: mainWindow.getNormalBounds() })
+    // 写盘失败（磁盘只读 / 写满）不再静默吞掉：此处没有可回显的 UI，
+    // 至少落到运行日志，避免「窗口位置下次启动回退」无从排查
+    const res = store.save({ windowBounds: mainWindow.getNormalBounds() })
+    if (res.ok === false) harness.log(`[claw-lite] ⚠ 窗口位置写入失败：${res.error}`)
   }
   const persistSoon = () => {
     clearTimeout(persistTimer)
@@ -113,6 +138,15 @@ function createMainWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) shell.openExternal(url)
     return { action: 'deny' }
+  })
+
+  // 仅放行本地渲染层页面的自身导航。setWindowOpenHandler 只挡 window.open，
+  // 挡不住页内导航（如把文件拖入窗口）；而主窗口挂有 preload，一旦被导航到
+  // 外部来源，window.clawLite 的暴露面就会随页面一起交出去。
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isMainWindowNavAllowed(url)) return
+    event.preventDefault()
+    if (/^https?:/i.test(url)) shell.openExternal(url)
   })
 
   return mainWindow
@@ -162,9 +196,28 @@ function openWebWindow() {
 
 /* ── 广播 ───────────────────────────────────────────────────────── */
 
+// 只推给渲染层宿主窗口：dsh Web UI 窗口（webWindow）没有 preload、也不订阅
+// 这两个通道，无差别群发虽无实际影响，却会把宿主状态外送到被托管的第三方页面
 function broadcast(channel, payload) {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send(channel, payload)
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload)
+  }
+}
+
+/**
+ * 无 UI 承接错误的调用点（菜单项 / autoStart）专用：
+ * harness 生命周期方法内部已有错误边界，这里补最后一道网，
+ * 避免未捕获的拒绝冒泡成主进程未处理异常。
+ */
+function safeHarness(action) {
+  const failed = (e) => {
+    if (harness) harness.log(`[claw-lite] ✗ ${e?.message || e}`)
+  }
+  try {
+    const r = action()
+    if (r && typeof r.catch === 'function') r.catch(failed)
+  } catch (e) {
+    failed(e)
   }
 }
 
@@ -245,8 +298,14 @@ function registerIpc() {
 
   ipcMain.handle('harness:saveSettings', (_e, settings) => {
     const port = Number(settings?.port)
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      return { ok: false, error: '监听端口需为 1-65535 之间的整数', snap: harness.snapshot() }
+    // 范围与 index.html `#f-port` 的 min/max、渲染层 saveSettings 前校验同源，
+    // 统一由 harness.cjs 的 PORT_MIN / PORT_MAX 决定（检查见 scripts/check.mjs §9）
+    if (!Number.isInteger(port) || port < PORT_MIN || port > PORT_MAX) {
+      return {
+        ok: false,
+        error: `监听端口需为 ${PORT_MIN}-${PORT_MAX} 之间的整数`,
+        snap: harness.snapshot(),
+      }
     }
     const patch = {
       port,
@@ -310,9 +369,9 @@ function buildMenu() {
     {
       label: '运行',
       submenu: [
-        { label: '启动 DSH', accelerator: 'CmdOrCtrl+R', click: () => harness.start() },
-        { label: '停止 DSH', accelerator: 'CmdOrCtrl+.', click: () => harness.stop() },
-        { label: '重启 DSH', click: () => harness.restart() },
+        { label: '启动 DSH', accelerator: 'CmdOrCtrl+R', click: () => safeHarness(() => harness.start()) },
+        { label: '停止 DSH', accelerator: 'CmdOrCtrl+.', click: () => safeHarness(() => harness.stop()) },
+        { label: '重启 DSH', click: () => safeHarness(() => harness.restart()) },
         { type: 'separator' },
         { label: '打开界面', accelerator: 'CmdOrCtrl+O', click: () => openWebWindow() },
         {
@@ -360,6 +419,12 @@ if (!app.requestSingleInstanceLock()) {
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.focus()
     }
+  })
+
+  // 最后一道网：漏 catch 的异步异常不应静默击穿主进程（无窗口时无从提示）
+  process.on('unhandledRejection', (reason) => {
+    console.error('[claw-lite] unhandledRejection:', reason)
+    if (harness) harness.log(`[claw-lite] ✗ 未处理的异步异常：${reason?.message || reason}`)
   })
 
   app.whenReady().then(async () => {
@@ -419,7 +484,7 @@ if (!app.requestSingleInstanceLock()) {
     // 缩短 autoStart 场景下「DSH 就绪」的体感耗时。harness.start 不依赖主窗口，
     // 启动期间的 state 广播在无窗口时自动 no-op，渲染层 boot 时通过 snapshot 拉取当前态。
     if (harness.settings.autoStart) {
-      harness.start()
+      safeHarness(() => harness.start())
     }
 
     app.on('activate', () => {

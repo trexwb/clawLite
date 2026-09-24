@@ -9,7 +9,7 @@
      • 必须传 --expose-internals：dsh 的 cordis-plugin-hmr 依赖 Node
        内部 binding，缺失会导致 web profile 加载失败并退出。
       • dsh 依赖树位于 resources/dsh/app/node_modules，随安装包分发。
-     • 端口：优先用户配置端口，被占用则由 OS 分配空闲端口。
+     • 端口：优先用户配置端口（PORT_MIN–PORT_MAX），被占用或越界则由 OS 分配空闲端口。
      • 就绪判定：HTTP 探活轮询（dsh web 启动后监听 /）。
    ═══════════════════════════════════════════════════════════════════ */
 
@@ -24,6 +24,11 @@ const os = require('node:os')
 const LOG_LIMIT = 800
 const READY_TIMEOUT_MS = 60_000
 const STOP_GRACE_MS = 6_000
+// 端口策略单一来源：渲染层输入框 min/max、主进程 IPC 校验、此处分配三处共用，
+// 与 index.html `#f-port`、src/main.js 的 PORT_* 保持一致（scripts/check.mjs §9 校验）
+const PORT_MIN = 1024
+const PORT_MAX = 65535
+const PORT_DEFAULT = 8799
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -58,7 +63,7 @@ function pickPort(preferred) {
     // 而该异常位于 start() 的 await 链路中且无捕获点，会击穿调用点，
     // 使界面永久停留在「正在启动…」且所有按钮被禁用。
     const p = Math.trunc(Number(preferred))
-    attempt(Number.isFinite(p) && p >= 1 && p <= 65535 ? p : 0, true)
+    attempt(Number.isFinite(p) && p >= PORT_MIN && p <= PORT_MAX ? p : 0, true)
   })
 }
 
@@ -84,7 +89,14 @@ class HarnessManager extends EventEmitter {
     this.port = 0
     this.starting = false
     this.logs = []
-    this.settings = { port: 8799, autoStart: false, openMode: 'window', workspace: '', dshHome: '' }
+    // 默认端口与 PORT_DEFAULT 同源：原先此处另写 8799，改端口策略时极易漏改
+    this.settings = {
+      port: PORT_DEFAULT,
+      autoStart: false,
+      openMode: 'window',
+      workspace: '',
+      dshHome: '',
+    }
     this._stopping = false
   }
 
@@ -168,6 +180,9 @@ class HarnessManager extends EventEmitter {
       installed,
       running: this.state === 'running',
       starting: this.starting,
+      // 渲染层据此决定「停止」能否点：启动探活阶段（最长 60s）子进程已存在，
+      // 有信号可发，应允许用户中止本次启动而不是干等超时
+      canStop: !!this.child,
       state: this.state,
       message: this.message,
       url: this.url,
@@ -188,6 +203,9 @@ class HarnessManager extends EventEmitter {
   async start() {
     if (this.starting) return this.snapshot()
     if (this.state === 'running' && this.child) return this.snapshot()
+    // 停止流程未收尾（stop() 已置 stopping / _stopping）时拒绝重入启动：
+    // 否则两段流程会互相覆盖 child 句柄，新起的进程会被 stop() 的超时分支误杀
+    if (this._stopping) return this.snapshot()
 
     const rt = this.checkRuntime()
     if (!rt.ok) {
@@ -344,11 +362,14 @@ class HarnessManager extends EventEmitter {
   async stop() {
     if (!this.child) {
       this.url = ''
+      this._stopping = false
       this.setState('stopped', '已停止')
       return this.snapshot()
     }
     this._stopping = true
-    this.setState('starting', '正在停止…')
+    // 停止期必须落在 stopping 态：复用 starting 会让渲染层无法把停止窗口判为
+    // 忙碌（busy 依赖 state === 'stopping'），「停止→启动」按钮解禁即生孤儿子进程
+    this.setState('stopping', '正在停止…')
     this.log('[claw-lite] 正在停止 DSH…')
 
     const child = this.child
@@ -369,10 +390,17 @@ class HarnessManager extends EventEmitter {
       sleep(STOP_GRACE_MS).then(() => true),
     ])
 
-    if (timedOut && this.child) {
+    // 只强杀本次调用捕获的进程：this.child 可能已被新进程接管，
+    // 沿用 this.child 会在竞态下杀掉刚起来的服务
+    if (timedOut && this.child === child) {
       this.log('[claw-lite] 优雅退出超时，强制结束进程')
-      try { this.child.kill('SIGKILL') } catch {}
+      try { child.kill('SIGKILL') } catch {}
     }
+
+    // 收尾前解除停止标记，允许后续 start() / restart() 正常重入
+    this._stopping = false
+    // 新进程已接管时（理论竞态路径）不得覆盖其状态与 URL
+    if (this.child && this.child !== child) return this.snapshot()
 
     this.url = ''
     this.starting = false
@@ -387,4 +415,4 @@ class HarnessManager extends EventEmitter {
   }
 }
 
-module.exports = { HarnessManager }
+module.exports = { HarnessManager, PORT_MIN, PORT_MAX, PORT_DEFAULT }

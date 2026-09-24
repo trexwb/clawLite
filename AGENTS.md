@@ -74,11 +74,11 @@ Claw Lite 是 DeepSeek Harness（dsh）的桌面宿主：内置 Electron 自带 
   - **事件订阅**：`onState → harness:state`（推送 `Snapshot`）/ `onLog → harness:log`（推送单行字符串，空串表示清屏）
   - **主进程通道**（`ipcMain.handle`）：`harness:snapshot` / `harness:start` / `harness:stop` / `harness:restart` / `harness:verify` / `harness:clearLogs` / `harness:saveSettings` / `harness:open` / `dialog:pickDirectory` / `updater:check` / `app:relaunch` / `app:info`
   - **广播事件**（`main.cjs` 的 `broadcast`）：`harness:state` / `harness:log`
-- **CSP（index.html）**：`<meta http-equiv="Content-Security-Policy">` 为 `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'`。**禁止**放宽到 `'unsafe-inline'` 脚本、`https:` connect 或外链脚本——保持仅加载本地 `self` 资源。
-- **状态机**（`HarnessManager.state`）：`notInstalled` / `stopped` / `starting` / `stopping` / `running` / `error`，由 `setState()` 统一驱动并经 `harness:state` 广播。渲染层 `STATE_LABEL` 必须与之一一对应（`scripts/check.mjs` 会校验），`starting` 与 `stopping` 期间渲染层均视为忙碌、禁用启停按钮。
+- **CSP（index.html）**：`<meta http-equiv="Content-Security-Policy">` 为 `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'`。**禁止**放宽到 `'unsafe-inline'` 脚本、`https:` connect 或外链脚本——保持仅加载本地 `self` 资源。其中 `style-src` 的 `'unsafe-inline'` 仅为 Vite 开发模式注入 `<style>`（HMR）保留，脚本侧不得放宽（`scripts/check.mjs` §10 硬断言）。
+- **状态机**（`HarnessManager.state`）：`notInstalled` / `stopped` / `starting` / `stopping` / `running` / `error`，由 `setState()` 统一驱动并经 `harness:state` 广播。渲染层 `STATE_LABEL` 必须双向对应：既有文案（`setState` 取值 ⊆ 标签），也全部可达（标签 ⊆ `setState` 取值，多出来的即死枚举）。`scripts/check.mjs` §7 对两个方向各有硬断言。`stopping` 由 `stop()` 置入并在收尾解除 `_stopping`；`starting` 与 `stopping` 期间渲染层均视为忙碌，其中启动探活阶段（子进程已起、快照 `canStop` 为真）**允许**点「停止」中止本次启动，其余操作仍禁用。
 - **DSH 启动关键细节（禁止移除）**：spawn 时必须带 `ELECTRON_RUN_AS_NODE=1`（以 Electron 可执行文件作纯 Node 解释器）且命令行首参为 `--expose-internals`（dsh 的 cordis-plugin-hmr 依赖 Node 内部 binding，缺失会导致 web profile 加载失败退出）；`--no-open` 避免 dsh 自行拉起浏览器。
 - **访问地址捕获**：dsh web 就绪时打印 `dsh web: http://127.0.0.1:<port>/?token=xxx`；`HarnessManager._captureUrl` 捕获该带 token 的完整 URL 作为 Web UI 信任凭据，**必须原样保留**（`token` 缺失会被拒）。
-- **设置体系**：`userData/settings.json`（macOS：`~/Library/Application Support/Claw Lite/settings.json`），字段 `port`（默认 8799）/ `autoStart` / `openMode`（`window`|`browser`）/ `workspace` / `dshHome` / `windowBounds`。
+- **设置体系**：`userData/settings.json`（macOS：`~/Library/Application Support/Claw Lite/settings.json`），字段 `port`（默认 8799，范围 1024–65535，由 `harness.cjs` 的 `PORT_MIN`/`PORT_MAX`/`PORT_DEFAULT` 单一来源导出）/ `autoStart` / `openMode`（`window`|`browser`）/ `workspace` / `dshHome` / `windowBounds`。
 
 ### 5. 文件结构
 
@@ -95,7 +95,8 @@ clawLite/
 │       └── main.css              ← 深色控制台样式（CSS 变量 / 设计令牌在 :root）
 ├── resources/dsh/                ← 内置 DSH 运行时（app/ + runtime.json，约 300MB）
 ├── scripts/
-│   ├── check.mjs                 ← 静态自检（JSON/文件/语法/IPC 契约/运行时/无 Tauri）
+│   ├── check.mjs                 ← 静态自检（JSON/文件/语法/IPC 契约/运行时/无 Tauri/枚举可达/类名交叉/端口一致/安全基线）
+│   ├── verify-dist.mjs           ← 构建产物校验（图标资产 + 相对路径，build:web 之后运行）
 │   └── fetch-runtime.mjs         ← 拉取 / 刷新内置 DSH 依赖树（DSH_VERSION 常量）
 ├── build/                        ← 打包资源（icon.png / entitlements.mac.plist）
 ├── index.html                    ← 渲染层入口（含严格 CSP meta）
@@ -120,7 +121,8 @@ clawLite/
 | `HarnessManager._captureUrl()` | harness.cjs | 捕获带 token 的访问地址（信任凭据） |
 | `HarnessManager.dshVersion` | harness.cjs | 读内置 DSH 运行时版本（不启动进程） |
 | `registerIpc()` | main.cjs | 注册全部 `ipcMain.handle` 通道 |
-| `broadcast()` | main.cjs | 向所有窗口广播 `harness:state` / `harness:log` |
+| `broadcast()` | main.cjs | 向主窗口广播 `harness:state` / `harness:log`（不再外送 dsh Web UI 窗口） |
+| `safeHarness(action)` | main.cjs | 菜单项 / autoStart 调用的错误边界（内部 catch + 拒绝兜底） |
 | `checkForUpdates()` | main.cjs | electron-updater 检查（仅打包态） |
 | `createMainWindow()` / `openWebWindow()` | main.cjs | 主窗口 / DSH Web UI 窗口 |
 | `SettingsStore.save/load` | settings.cjs | 设置读写（userData/settings.json） |
@@ -128,6 +130,9 @@ clawLite/
 | `call(cmd, args)` / `COMMANDS` | src/main.js | 渲染层命令 → preload 方法映射 |
 | `render(snap)` | src/main.js | 渲染状态与设置回填 |
 | `boot()` | src/main.js | 启动：桌面环境绑定 IPC / 浏览器预览降级 |
+| `readPort()` | src/main.js | 端口输入校验（与 `PORT_MIN`/`PORT_MAX` 同源，非法返回 null） |
+| `flushLog()` | src/main.js | 日志帧内合并落 DOM（rAF 批处理 + 一次性裁剪与滚动） |
+| `classify()` | src/main.js | 日志着色分类（`l-claw` / `l-err`，英文关键词带词边界） |
 
 ### 7. CSS 约定
 
@@ -140,11 +145,13 @@ clawLite/
 
 ### 8. 交互约定
 
-- **按钮可用性**：`render(snap)` 按状态机禁用/启用量（启动中禁用全部操作；未运行时禁用打开界面；运行时禁用启动）
-- **状态/日志流**：`harness:state` 推送整体快照驱动 `render()`；`harness:log` 推送单行（空串 = 清屏），渲染层按 `classify()` 着色（`[claw-lite]` → `l-claw`；含 error/失败/Error → `l-err`）
+- **按钮可用性**：`render(snap)` 按状态机禁用/启用量（停止中禁用全部启停操作；**启动中禁用除「停止」外的全部操作**——快照 `canStop` 为真（子进程已起、探活中）时「停止」可用，用于中止本次启动；未运行时禁用打开界面；运行时禁用启动）
+- **状态/日志流**：`harness:state` 推送整体快照驱动 `render()`；`harness:log` 推送单行（空串 = 清屏），渲染层按 `classify()` 着色（`[claw-lite]` → `l-claw`；命中英文 `error`/`fatal` 独立词或中文 `错误`/`失败` → `l-err`）；日志写入经 `requestAnimationFrame`（`flushLog`）合并到一帧批量追加，避免逐行强制重排
 - **自动滚动**：日志区仅在 `f-autoscroll` 勾选时自动滚到底部
 - **复制地址**：`navigator.clipboard.writeText(snapshot.url)`，需在 Electron 桌面环境（浏览器预览模式无 clipboard 权限时降级提示）
-- **设置回填**：仅在对应输入框未聚焦时回填 `port`/`workspace`/`dshHome`，避免打断用户输入
+- **设置回填**：仅在对应控件未聚焦时回填 `port`/`workspace`/`dshHome`/`openMode`，避免打断用户输入
+- **端口校验**：渲染层 `readPort()` 与 `harness.cjs` 的 `PORT_MIN`/`PORT_MAX`、`index.html` 输入框 `min`/`max` 三方同源（1024–65535）；非法值显式报错，禁止 `Number(...) || 默认值` 式静默改写
+- **设置生效时机**：服务运行 / 启动探活期间保存设置时，toast 必须说明「将在下次启动 DSH 时生效」（端口等仅在下一次 spawn 读取）
 - **外部链接**：主窗口/`webWindow` 的 `setWindowOpenHandler` 将 `https?` 链接交 `shell.openExternal`，应用内不另开新窗
 
 ### 9. 数据流
@@ -197,7 +204,7 @@ dsh 子进程 stdout → attachPipes → log(line) → _captureUrl(line) 匹配
 
 - **语义化标签**：`header`/`main`/`section`/`footer`/`aside`/`nav`，避免全 `<div>`
 - **类名短横线**：禁止下划线或驼峰类名
-- **图片**：必须加 `alt`；当前仅 SVG data-uri favicon，无外部图片
+- **图片**：必须加 `alt` 与显式 `width`/`height`；favicon 为 SVG data-uri，顶栏品牌图引用项目图标资源 `build/icon.png`（Vite 构建时复制到 `dist/assets/`，由 `npm run verify:dist` 断言产物真实存在且被引用）
 - **表单**：`label` 与 `input` 关联（`for`/`id`），输入框需 `placeholder`
 - **内联脚本**：禁止 `<script>inline</script>`（CSP 已禁 `script-src 'unsafe-inline'`），所有逻辑走 `src/main.js`
 
@@ -217,7 +224,7 @@ dsh 子进程 stdout → attachPipes → log(line) → _captureUrl(line) 匹配
 - **异步**：优先 `async/await`，避免 `.then()` 链
 - **嵌套深度**：不超过 3 层
 - **数组操作**：优先 `map`/`filter`/`reduce`
-- **console 语句**：生产代码禁止 `console.log`（调试日志）；`console.error`/`console.warn` 仅用于 catch 块中的错误处理
+- **console 语句**：生产代码禁止 `console.log`（调试日志）；`console.error`/`console.warn` 仅用于 catch 块中的错误处理。**唯一豁免**：`main.cjs` 的 `perfMark()` 启动埋点与 `process.on('unhandledRejection')` 的 `console.error`——这两处无窗口可回显，需保留终端可见性
 - **HTML 拼接**：渲染层操作 DOM 一律用 `document.createElement` / `textContent`（当前实现已遵循，禁止改用 `innerHTML` 拼接未转义用户数据）
 - **单行函数**：禁止将多逻辑函数压缩为单行，影响可读性
 - **CommonJS 主进程**：`electron/*.cjs` 使用 `require` + `module.exports`（与渲染层 ESM 区分明确，不得混用）
@@ -228,7 +235,7 @@ dsh 子进程 stdout → attachPipes → log(line) → _captureUrl(line) 匹配
 - **contextIsolation**：主进程 `contextIsolation: true` + `nodeIntegration: false` + `sandbox: true` 不得关闭
 - **XSS 防护**：渲染层禁止 `innerHTML` 注入未转义内容；DOM 更新用 `textContent`/`createElement`
 - **无外部网络**：本项目不调用任何外部接口（DSH 子进程仅监听 `127.0.0.1`）；自动更新走 electron-updater 自有通道
-- **受信任内容窗口导航加固**：加载 dsh web 的窗口除 `setWindowOpenHandler` 外**必须**同时挂 `will-navigate` 守卫，仅放行与 `harness.url` 同源的站内导航，其余一律 `preventDefault()` 并交系统浏览器——只防 `window.open` 防不住页内 self 导航
+- **受信任内容窗口导航加固**：加载 dsh web 的窗口除 `setWindowOpenHandler` 外**必须**同时挂 `will-navigate` 守卫，仅放行与 `harness.url` 同源的站内导航，其余一律 `preventDefault()` 并交系统浏览器——只防 `window.open` 防不住页内 self 导航。**主窗口（打包态加载 `dist/index.html`、开发态加载 `DEV_SERVER`）同样必须挂 `will-navigate` 守卫**，仅放行自身入口地址（打包态为 `dist/index.html` 本体，开发态为 `DEV_SERVER` 同源）；主窗口挂有 preload，一旦被导航到外部来源即等于交出 `window.clawLite` 暴露面。
 - **异步事件必须有 error 监听**：electron-updater 等基于 EventEmitter 的后台模块须挂 `autoUpdater.on('error', …)`，否则下载阶段异步 error 会以未处理异常击穿主进程（`try/catch` 覆盖不到）
 - **密钥/Token**：DSH Web UI 的访问 token 仅存于内存（`HarnessManager.url`），不落盘、不打印到日志以外的地方
 
@@ -237,6 +244,7 @@ dsh 子进程 stdout → attachPipes → log(line) → _captureUrl(line) 匹配
 - **日志上限**：主进程 `HarnessManager.log` 受 `LOG_LIMIT = 800` 约束，超出截断旧日志；渲染层 DOM 保留行数须与之对齐（同为 800，超出从头部裁剪），二者解耦但量级一致
 - **探活节流**：`waitForReady` 轮询间隔 400ms、单次超时 `READY_TIMEOUT_MS = 60_000`，避免忙等
 - **窗口几何写盘**：`resize`/`move` 走 400ms 防抖，窗口 `close` 前必须补一次同步落盘（防「刚拖完即退出」丢位置）
+- **日志追加批处理**：渲染层日志写入经 `requestAnimationFrame`（`flushLog`）合并队列，一帧内只做一次 `DocumentFragment` 追加与一次裁剪 / 滚动定位，禁止逐行 `appendChild` 后同步读 `scrollHeight`
 - **防抖/节流**：高频 UI 事件（如日志追加）保持轻量 DOM 操作；设置回填避免打断输入
 - **无障碍**：支持 `@media (prefers-reduced-motion: reduce)`
 
@@ -259,6 +267,7 @@ dsh 子进程 stdout → attachPipes → log(line) → _captureUrl(line) 匹配
 
 ### 12. 自检与 CI
 
-- **本地自检**：`npm run check`（覆盖 JSON 合法性、关键文件存在、全量 JS 语法、IPC 契约三层对齐、内置 DSH 运行时完整性、无残留 Tauri 依赖）。任何改动后必须全绿。
-- **CI 流水线**：`.github/workflows/release.yml` 在推送 `v*` tag（或手动触发）后，于 macOS / Windows runner 执行 `npm ci → npm run runtime → npm run check → npm run build:web → electron-builder`，产物汇总后由 `publish` job 创建 GitHub Release。
+- **本地自检**：`npm run check`（覆盖 JSON 合法性、关键文件存在、全量 JS 语法、IPC 契约三层对齐、内置 DSH 运行时完整性、无残留 Tauri 依赖、状态枚举双向可达、日志着色类名 ↔ CSS 交叉、端口范围三方一致、安全与无障碍基线硬断言）。任何改动后必须全绿。
+- **产物校验**：`npm run verify:dist`（需先 `npm run build:web`）断言 `dist/index.html` 资源引用为相对路径、品牌图标真实产出并被引用——静态自检看不到 Vite 产物。
+- **CI 流水线**：`.github/workflows/release.yml` 在推送 `v*` tag（或手动触发）后，于 macOS / Windows runner 执行 `npm ci → npm run runtime → npm run check → npm run build:web → npm run verify:dist → electron-builder`，产物汇总后由 `publish` job 创建 GitHub Release。
 - **打包**：`npm run dist:mac` / `dist:win` / `dist:linux` / `dist`，产物输出 `release/`。macOS 本地打包默认不签名（`CSC_IDENTITY_AUTO_DISCOVERY=false`），正式分发需具备证书的机器签名/公证。

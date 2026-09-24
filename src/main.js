@@ -48,6 +48,21 @@ const el = {
   footVersion: $('foot-version'),
 }
 
+// 端口策略：与 electron/harness.cjs 的 PORT_MIN / PORT_MAX / PORT_DEFAULT、
+// index.html `#f-port` 的 min/max 同源（scripts/check.mjs §9 校验三方一致）
+const PORT_MIN = 1024
+const PORT_MAX = 65535
+const PORT_DEFAULT = 8799
+const PORT_HINT = `监听端口需为 ${PORT_MIN}-${PORT_MAX} 的整数`
+
+/** 读取并校验端口输入：非整数或越界返回 null，由调用方显式回显错误 */
+function readPort() {
+  const raw = String(el.fPort.value ?? '').trim()
+  if (!/^\d+$/.test(raw)) return null
+  const n = Number(raw)
+  return n >= PORT_MIN && n <= PORT_MAX ? n : null
+}
+
 let snapshot = null
 let logEmpty = true
 
@@ -55,9 +70,11 @@ let logEmpty = true
 
 let toastTimer = null
 function toast(msg, isErr = false) {
+  // 先解除隐藏再写文案：元素处于 display:none 时不在可访问树，
+  // 先赋值会导致部分读屏不播报这条提示
+  el.toast.classList.remove('hidden')
   el.toast.textContent = msg
   el.toast.classList.toggle('err', isErr)
-  el.toast.classList.remove('hidden')
   clearTimeout(toastTimer)
   toastTimer = setTimeout(() => el.toast.classList.add('hidden'), 3200)
 }
@@ -68,7 +85,8 @@ const COMMANDS = {
   harness_start: () => api.start(),
   harness_stop: () => api.stop(),
   harness_restart: () => api.restart(),
-  harness_install: () => api.verify(),
+  // 语义与实现对齐：这里是「校验运行时」，通道为 harness:verify（preload 方法同名）
+  harness_verify: () => api.verify(),
   harness_clear_logs: () => api.clearLogs(),
   harness_save_settings: (args) => api.saveSettings(args?.settings),
   harness_open: (args) => api.open(args?.mode),
@@ -111,10 +129,13 @@ function render(snap) {
   el.btnCopy.disabled = !snap.url
 
   // 按钮可用性：停止过程中（state=stopping）同样视为忙碌，
-  // 避免「停止→启动」重入产生孤儿 dsh 子进程与状态误判。
+  // 避免「停止→启动」重入产生孤儿 dsh 子进程与状态误判
+  // （stopping 由主进程 stop() 置入，busy 才能覆盖整个停止窗口）。
   const busy = !!snap.starting || state === 'stopping'
   el.btnStart.disabled = busy || snap.running || !snap.installed
-  el.btnStop.disabled = busy || !snap.running
+  // 启动探活最长 60s，「停止」在此期间必须可用：canStop 表示子进程已起、
+  // 有信号可发，用于中止本次启动。
+  el.btnStop.disabled = state === 'stopping' || !(snap.running || (snap.starting && snap.canStop))
   el.btnRestart.disabled = busy || !snap.installed
   el.btnOpenWindow.disabled = !snap.running || !snap.url
   el.btnOpenBrowser.disabled = !snap.running || !snap.url
@@ -133,10 +154,11 @@ function render(snap) {
 
   // 设置（仅在未聚焦时回填，避免打断输入）
   const s = snap.settings || {}
-  if (document.activeElement !== el.fPort) el.fPort.value = s.port ?? 8799
+  if (document.activeElement !== el.fPort) el.fPort.value = s.port ?? PORT_DEFAULT
   if (document.activeElement !== el.fWorkspace) el.fWorkspace.value = s.workspace || ''
   if (document.activeElement !== el.fDshHome) el.fDshHome.value = s.dshHome || ''
-  el.fOpenMode.value = s.openMode || 'window'
+  // 与其它字段一致：聚焦时不回填，避免用户正按方向键选择打开方式时被覆盖
+  if (document.activeElement !== el.fOpenMode) el.fOpenMode.value = s.openMode || 'window'
   el.fAuto.checked = !!s.autoStart
 
   el.footVersion.textContent = snap.dshVersion ? `dsh ${snap.dshVersion}` : ''
@@ -146,26 +168,55 @@ function render(snap) {
 // 与主进程 LOG_LIMIT(800) 对齐，超出后从头部裁剪。
 const LOG_DOM_LIMIT = 800
 
-function logLine(text, kind) {
+// 日志写入合并到下一帧批量执行：dsh 启动期日志密集，逐行 appendChild +
+// 同步读 scrollHeight 会触发大量强制重排；合并后一帧只重排一次。
+let logQueue = []
+let logFrame = 0
+
+function flushLog() {
+  logFrame = 0
+  if (!logQueue.length) return
+  const frag = document.createDocumentFragment()
+  for (const { text, kind } of logQueue) {
+    const span = document.createElement('span')
+    if (kind) span.className = kind
+    span.textContent = text + '\n'
+    frag.appendChild(span)
+  }
+  logQueue = []
   if (logEmpty) {
     el.log.textContent = ''
     logEmpty = false
   }
-  const span = document.createElement('span')
-  if (kind) span.className = kind
-  span.textContent = text + '\n'
-  el.log.appendChild(span)
+  el.log.appendChild(frag)
   while (el.log.childNodes.length > LOG_DOM_LIMIT) el.log.removeChild(el.log.firstChild)
   if (el.fAutoscroll.checked) el.log.scrollTop = el.log.scrollHeight
 }
 
+function logLine(text, kind) {
+  logQueue.push({ text, kind })
+  if (!logFrame) logFrame = requestAnimationFrame(flushLog)
+}
+
+// 英文关键词要求「独立词 + 前置分隔符」：原实现 /error/i 会把
+// `/path/error-handler.js`、`token=errorless` 这类内容误染成错误色。
+// 中文不参与 \b 判定（CJK 非 \w），单独匹配。
+const ERR_WORD_RE = /(?:^|[\s(\["'「:：])(?:error|fatal)\b/i
+const ERR_CJK_RE = /错误|失败/
+
 function classify(line) {
   if (line.startsWith('[claw-lite]')) return 'l-claw'
-  if (/error|错误|失败|Error:/i.test(line)) return 'l-err'
+  if (ERR_WORD_RE.test(line) || ERR_CJK_RE.test(line)) return 'l-err'
   return null
 }
 
 function rebuildLog(lines) {
+  // 丢弃尚未刷入的队列并取消在帧任务，避免重建后又被旧行追加
+  logQueue = []
+  if (logFrame) {
+    cancelAnimationFrame(logFrame)
+    logFrame = 0
+  }
   el.log.textContent = ''
   logEmpty = true
   if (!lines || !lines.length) {
@@ -188,9 +239,9 @@ async function guard(fn, okMsg) {
 }
 
 function bind() {
-  el.btnStart.addEventListener('click', () =>
-    guard(() => call('harness_start'), '正在启动 DSH 服务…')
-  )
+  // 启动结果由 harness:state 快照驱动（探活期间可能被「停止」中止），
+  // 故不在此提示「正在启动」，避免取消后仍弹启动提示
+  el.btnStart.addEventListener('click', () => guard(() => call('harness_start')))
   el.btnStop.addEventListener('click', () => guard(() => call('harness_stop'), '已停止 DSH'))
   el.btnRestart.addEventListener('click', () =>
     guard(() => call('harness_restart'), '正在重启…')
@@ -203,7 +254,7 @@ function bind() {
   )
   el.btnInstall.addEventListener('click', () =>
     guard(async () => {
-      const msg = await call('harness_install')
+      const msg = await call('harness_verify')
       toast(msg)
     })
   )
@@ -233,8 +284,17 @@ function bind() {
 
   el.btnSave.addEventListener('click', () =>
     guard(async () => {
+      // 端口先在前端按同一范围校验：原实现 `Number(...) || 8799` 会把
+      // 空值/非法值静默改写成 8799 保存，用户看到的输入与落盘值不一致
+      const port = readPort()
+      if (port === null) {
+        el.saveHint.textContent = '端口无效'
+        setTimeout(() => (el.saveHint.textContent = ''), 2400)
+        toast(PORT_HINT, true)
+        return
+      }
       const settings = {
-        port: Number(el.fPort.value) || 8799,
+        port,
         autoStart: el.fAuto.checked,
         openMode: el.fOpenMode.value,
         dshHome: el.fDshHome.value.trim(),
@@ -250,7 +310,10 @@ function bind() {
       }
       el.saveHint.textContent = '已保存'
       setTimeout(() => (el.saveHint.textContent = ''), 2400)
-      toast('设置已保存')
+      // 端口/工作目录等只在下一次 spawn 时读取：服务在运行中保存设置，
+      // 旧配置仍在生效，必须显式说明，避免误以为已即刻切换
+      const restartNeeded = !!(res?.snap?.running || res?.snap?.starting)
+      toast(restartNeeded ? '设置已保存，将在下次启动 DSH 时生效' : '设置已保存')
     })
   )
 
@@ -294,6 +357,7 @@ async function boot() {
       installed: false,
       running: false,
       starting: false,
+      canStop: false,
       state: 'stopped',
       message: '浏览器预览模式（未运行在 Electron 桌面应用中）',
       dshVersion: '',
@@ -305,7 +369,7 @@ async function boot() {
       dshHome: '',
       workspace: '',
       logs: [],
-      settings: { port: 8799, autoStart: false, openMode: 'window', dshHome: '', workspace: '' },
+      settings: { port: PORT_DEFAULT, autoStart: false, openMode: 'window', dshHome: '', workspace: '' },
     })
     rebuildLog([])
     el.btnUpdate.classList.add('hidden')

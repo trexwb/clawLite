@@ -45,6 +45,10 @@ jobs:
       - name: 构建渲染进程
         run: npm run build:web
 
+      # 静态自检看不到 Vite 产物：构建后单独断言相对路径与品牌图标真实产出
+      - name: 校验渲染层产物
+        run: npm run verify:dist
+
       - name: 打包安装程序
         run: npx electron-builder ${{ matrix.args }} --publish never
         env:

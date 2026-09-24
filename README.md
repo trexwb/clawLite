@@ -83,7 +83,7 @@ npm run dist           # 当前平台
 ## CI 流水线
 
 `.github/workflows/release.yml`：推送 `v*` tag（或手动触发）后，
-在 macOS / Windows runner 上分别执行 `npm ci → npm run runtime → npm run check → npm run build:web → electron-builder`，
+在 macOS / Windows runner 上分别执行 `npm ci → npm run runtime → npm run check → npm run build:web → npm run verify:dist → electron-builder`，
 产物汇总后由 `publish` job 创建 GitHub Release。
 
 ## 自检
@@ -94,7 +94,17 @@ npm run check
 
 覆盖：JSON 合法性、关键文件存在性、全部 JS 语法（`electron/`、`scripts/`、`src/`）、
 **IPC 契约三层对齐**（渲染层 `api.*` → preload 暴露方法 → 主进程 `ipcMain.handle` 通道 / `broadcast` 事件）、
-内置 DSH 运行时完整性、无残留 Tauri 依赖。
+内置 DSH 运行时完整性、无残留 Tauri 依赖、
+**状态枚举双向可达**（`setState` ↔ `STATE_LABEL`，只多即死枚举）、
+**日志着色类名 ↔ CSS 交叉**（防死样式）、
+**端口范围三方一致**（`index.html` ↔ `main.cjs` ↔ `harness.cjs`）、
+**安全与无障碍基线**（`webPreferences` / CSP / 播报区唯一）。
+
+构建产物另有一道校验（需先 `npm run build:web`，CI 在构建后自动执行）：
+
+```bash
+npm run verify:dist    # dist/index.html 相对路径 + 品牌图标资产真实产出
+```
 
 ## 配置
 
@@ -102,7 +112,7 @@ npm run check
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| 端口 | `8799` | dsh web 监听端口 |
+| 端口 | `8799` | dsh web 监听端口，可填 1024–65535；越界或已被占用时自动换空闲端口 |
 | 工作目录 | 用户主目录 | dsh 的工作目录 |
 | DSH_HOME | userData/dsh-home | DSH 数据目录（留空则用默认） |
 | 开机自启 | 关 | 应用启动后自动拉起 dsh |
@@ -121,7 +131,8 @@ clawLite/
 ├─ resources/dsh/         # 内置 DSH 运行时（app/ + runtime.json）
 ├─ scripts/
 │  ├─ fetch-runtime.mjs   # 拉取 / 刷新内置 DSH 依赖树
-│  └─ check.mjs           # 静态自检
+│  ├─ check.mjs           # 静态自检（含枚举可达 / 类名交叉 / 端口一致 / 安全基线）
+│  └─ verify-dist.mjs     # 构建产物校验（图标资产 + 相对路径）
 ├─ build/                 # 打包资源（图标、entitlements）
 ├─ electron-builder.yml   # 打包配置
 └─ .github/workflows/     # CI（构建 + 发布）

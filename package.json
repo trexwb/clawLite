@@ -15,6 +15,7 @@
     "runtime": "node scripts/fetch-runtime.mjs",
     "runtime:force": "node scripts/fetch-runtime.mjs --force",
     "check": "node scripts/check.mjs",
+    "verify:dist": "node scripts/verify-dist.mjs",
     "dist": "npm run build:web && electron-builder",
     "dist:mac": "npm run build:web && electron-builder --mac",
     "dist:win": "npm run build:web && electron-builder --win",

@@ -10,7 +10,10 @@
         渲染层 api.*  →  preload 暴露方法  →  主进程 ipcMain.handle 通道
      5. 内置 DSH 运行时完整性（本地缺失仅告警，CI 在 runtime 步骤后校验）
      6. 无残留 Tauri 依赖
-     7. 状态枚举一致性（harness.setState ↔ 渲染层 STATE_LABEL）
+     7. 状态枚举双向可达（harness.setState ↔ 渲染层 STATE_LABEL）
+     8. 日志着色类名交叉（渲染层 classify() ↔ main.css 定义）
+     9. 端口范围三方一致（index.html ↔ main.cjs ↔ harness.cjs）
+    10. 安全与无障碍基线硬断言（webPreferences / CSP / 播报区唯一）
    ═══════════════════════════════════════════════════════════════════ */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -145,9 +148,10 @@ const tauriDeps = Object.keys(allDeps).filter((d) => d.includes("tauri"));
 ok("无残留 Tauri 依赖", tauriDeps.length === 0, tauriDeps.join(",") || "clean");
 ok("入口指向 Electron 主进程", pkg.main === "electron/main.cjs", pkg.main || "(未设置)");
 
-/* ── 7) 状态枚举一致性 ─────────────────────────────────────────── */
-// harness.cjs 的 setState 取值必须都能在渲染层 STATE_LABEL 中找到文案，
-// 否则 UI 会直接显示英文状态码（如曾经的 stopping）。
+/* ── 7) 状态枚举双向可达 ───────────────────────────────────────── */
+// 原实现只断言「harness.setState 取值 ⊆ 渲染层标签」：那只能保证主进程用到的
+// 状态都有文案；反过来「渲染层写了标签、主进程永不置入」的死枚举（stopping 曾
+// 如此）会随全绿漏网。故补反向可达性断言。
 const harnessSrc = readFileSync(join(root, "electron/harness.cjs"), "utf8");
 const harnessStates = [
   ...new Set(
@@ -163,9 +167,102 @@ const labelKeys = [
 ];
 const missingLabels = harnessStates.filter((s) => !labelKeys.includes(s));
 ok(
-  "状态枚举对齐（harness.setState ↔ 渲染层 STATE_LABEL）",
+  "状态枚举正向对齐（harness.setState ⊆ 渲染层 STATE_LABEL）",
   harnessStates.length > 0 && !missingLabels.length,
   missingLabels.join(",") || `${harnessStates.length} 个状态`
+);
+const deadLabels = labelKeys.filter((s) => !harnessStates.includes(s));
+ok(
+  "状态枚举无死枚举（渲染层 STATE_LABEL ⊆ harness.setState）",
+  labelKeys.length > 0 && !deadLabels.length,
+  deadLabels.join(",") || "全部可达"
+);
+
+/* ── 8) 日志着色类名 ↔ CSS 交叉 ────────────────────────────────── */
+// classify() 返回的类名必须在 main.css 有定义；main.css 里 `.log .l-*` 的规则
+// 也必须真能被 classify() 产出——两侧都能拦住死样式 / 死类名。
+const cssSrc = readFileSync(join(root, "src/styles/main.css"), "utf8");
+const classifyBlock = rendererSrc.match(/function classify\(line\)\s*\{([\s\S]*?)\n\}/);
+const classifyClasses = [
+  ...new Set([...(classifyBlock ? classifyBlock[1] : "").matchAll(/'(l-[a-z]+)'/g)].map((m) => m[1])),
+];
+const logClasses = [...new Set([...cssSrc.matchAll(/\.log\s+\.(l-[a-z]+)\s*\{/g)].map((m) => m[1]))];
+const classNoStyle = classifyClasses.filter((c) => !logClasses.includes(c));
+ok(
+  "日志着色类名均有 CSS 定义（classify() → main.css）",
+  classifyClasses.length > 0 && !classNoStyle.length,
+  classNoStyle.join(",") || classifyClasses.join(",")
+);
+const styleNoClass = logClasses.filter((c) => !classifyClasses.includes(c));
+ok(
+  "无死样式（main.css 的 .log .l-* 均能被 classify() 产出）",
+  !styleNoClass.length,
+  styleNoClass.join(",") || "无"
+);
+
+/* ── 9) 端口范围三方一致 ───────────────────────────────────────── */
+// 输入框约束、主进程 IPC 校验、harness 分配策略必须同源，否则会出现
+// 「输入框拦住 / 主进程放行 / 渲染层静默改写」三条互不一致的路径。
+const htmlSrc = readFileSync(join(root, "index.html"), "utf8");
+const htmlPort = htmlSrc.match(/id="f-port"[^>]*min="(\d+)"[^>]*max="(\d+)"/);
+const cjsPort = harnessSrc.match(/const PORT_MIN\s*=\s*(\d+)[\s\S]*?const PORT_MAX\s*=\s*(\d+)/);
+const cjsDefault = harnessSrc.match(/const PORT_DEFAULT\s*=\s*(\d+)/);
+const jsPorts = [...rendererSrc.matchAll(/const PORT_(MIN|MAX|DEFAULT)\s*=\s*(\d+)/g)].reduce(
+  (acc, m) => ({ ...acc, [m[1]]: m[2] }),
+  {}
+);
+ok(
+  "端口范围一致（index.html ↔ harness.cjs PORT_MIN/MAX）",
+  !!htmlPort && !!cjsPort && htmlPort[1] === cjsPort[1] && htmlPort[2] === cjsPort[2],
+  htmlPort && cjsPort ? `${htmlPort[1]}-${htmlPort[2]}` : "未匹配到端口声明"
+);
+ok(
+  "渲染层端口常量与 harness.cjs 同源（PORT_MIN/MAX/DEFAULT）",
+  !!cjsPort &&
+    !!cjsDefault &&
+    jsPorts.MIN === cjsPort[1] &&
+    jsPorts.MAX === cjsPort[2] &&
+    jsPorts.DEFAULT === cjsDefault[1],
+  `${jsPorts.MIN ?? "?"}-${jsPorts.MAX ?? "?"} · 默认 ${jsPorts.DEFAULT ?? "?"}`
+);
+
+/* ── 10) 安全与无障碍基线硬断言 ───────────────────────────────── */
+const prefBlocks = mainSrc
+  .split("webPreferences: {")
+  .slice(1)
+  .map((s) => s.slice(0, s.indexOf("}")));
+ok("主进程 webPreferences 块存在", prefBlocks.length >= 2, `${prefBlocks.length} 处`);
+prefBlocks.forEach((b, i) => {
+  ok(
+    `webPreferences #${i + 1} 安全三项（sandbox / contextIsolation / nodeIntegration:false）`,
+    /sandbox:\s*true/.test(b) &&
+      /contextIsolation:\s*true/.test(b) &&
+      /nodeIntegration:\s*false/.test(b),
+    b.replace(/\s+/g, " ").trim().slice(0, 56)
+  );
+});
+const cspMeta = htmlSrc.match(/http-equiv="Content-Security-Policy"[\s\S]*?content="([^"]+)"/);
+const cspText = cspMeta ? cspMeta[1] : "";
+ok("CSP meta 存在", !!cspMeta);
+ok(
+  "CSP 未放宽脚本内联（script-src 仅 'self'）",
+  /script-src[^;]*'self'/.test(cspText) && !/script-src[^;]*unsafe-inline/.test(cspText),
+  cspText.slice(0, 34)
+);
+ok(
+  "CSP connect-src 仅 'self'（无 https: / ws:）",
+  /connect-src\s+'self'/.test(cspText) && !/connect-src[^;]*(https:|ws:)/.test(cspText)
+);
+const pillTag = htmlSrc.match(/<span id="status-pill"[^>]*>/);
+const heroTag = htmlSrc.match(/<div class="hero-text"[^>]*>/);
+ok(
+  "状态播报区唯一（#hero-text 承担播报，#status-pill 不参与）",
+  !!pillTag && !!heroTag && !/aria-live/.test(pillTag[0]) && /aria-live="polite"/.test(heroTag[0]),
+  (pillTag ? pillTag[0] : "").trim()
+);
+ok(
+  "日志区不做 live 播报（高频追加不打断读屏）",
+  /id="log"[^>]*aria-live="off"/.test(htmlSrc)
 );
 
 console.log(

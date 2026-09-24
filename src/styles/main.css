@@ -7,12 +7,14 @@
   --bg: #0e1014;
   --bg-soft: #14171d;
   --card: #171a21;
-  --card-hover: #1c2029;
+  /* 原 #1c2029 与 --card(#171a21) 差值极小、悬停几乎不可辨，提亮一档 */
+  --card-hover: #222834;
   --line: #262b35;
   --line-soft: #1f232b;
   --text: #e8eaf0;
   --text-dim: #9aa2b1;
-  --text-faint: #6b7383;
+  /* 原 #6b7383 在 card 上仅 3.65:1、未达 AA；提到 #7f8899 实测 4.88:1 */
+  --text-faint: #7f8899;
   --accent: #e2673a;
   --accent-soft: rgba(226, 103, 58, 0.14);
   --ok: #3ecf8e;
@@ -544,10 +546,6 @@ select {
   color: var(--accent);
 }
 
-.log .l-ok {
-  color: var(--ok);
-}
-
 /* ── 底栏 ─────────────────────────────────────────────────────── */
 
 #foot {
@@ -629,6 +627,18 @@ select {
   .dot,
   .pill-dot {
     transition: none;
+  }
+
+  /* 注释声称「只覆盖在用动效」，此前漏了按钮与输入控件的 150ms 过渡与按压位移 */
+  .btn,
+  .field input,
+  .field select,
+  .check input {
+    transition: none;
+  }
+
+  .btn:active {
+    transform: none;
   }
 
   .dot.starting,
