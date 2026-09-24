@@ -3,123 +3,156 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
     <title>Claw Lite</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='7' fill='%23C8501B'/%3E%3C/svg%3E" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='7' fill='%23E2673A'/%3E%3C/svg%3E"
+    />
     <link rel="stylesheet" href="/src/styles/main.css" />
   </head>
   <body>
     <div id="app">
-      <!-- 左侧栏 -->
-      <aside id="sidebar">
+      <!-- ── 顶栏 ─────────────────────────────────────────────── -->
+      <header id="topbar">
         <div class="brand">
-          <span class="brand-name">Claw Lite</span>
-          <span class="brand-dot"></span>
-        </div>
-        <button id="btn-new-task" type="button">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-          <span>新任务</span>
-        </button>
-        <ul id="session-list"></ul>
-        <div class="sidebar-footer">
-          <button id="btn-workspace" type="button" title="工作目录">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-            <span id="workspace-label">未设置工作目录</span>
-          </button>
-          <button id="btn-settings" type="button" class="icon-btn" title="设置" aria-label="设置">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          </button>
-        </div>
-      </aside>
-
-      <!-- 主区 -->
-      <main>
-        <header id="topbar">
-          <h1 id="session-title">新任务</h1>
-          <span id="ws-chip" class="warn" title="点击设置工作目录">未设置工作目录</span>
-        </header>
-        <section id="chat-scroll">
-          <div class="chat-col" id="chat-col"></div>
-        </section>
-        <footer id="composer">
-          <div class="composer-card">
-            <textarea id="input" rows="1" placeholder="给 Claw Lite 派个任务…" autocomplete="off"></textarea>
-            <button id="btn-send" type="button" title="发送（Enter）" aria-label="发送">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 22-7z"/></svg>
-            </button>
-            <button id="btn-stop" type="button" class="hidden" title="停止" aria-label="停止">
-              <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg>
-            </button>
+          <span class="brand-mark"></span>
+          <div class="brand-text">
+            <strong>Claw Lite</strong>
+            <span>DeepSeek Harness 本地运行时</span>
           </div>
-        </footer>
-      </main>
-    </div>
-
-    <!-- 设置弹窗 -->
-    <div id="settings-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
-      <div class="modal-card">
-        <header class="modal-head">
-          <h2>设置</h2>
-          <button id="settings-close" type="button" class="icon-btn" title="关闭" aria-label="关闭">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-          </button>
-        </header>
-        <div class="modal-body">
-          <label class="field">
-            <span class="field-label"><span>API Key</span></span>
-            <span class="field-row">
-              <input id="set-apikey" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" />
-              <button id="set-key-eye" type="button" class="icon-btn" title="显示 / 隐藏" aria-label="显示或隐藏 API Key"></button>
-            </span>
-          </label>
-          <label class="field">
-            <span class="field-label"><span>API 地址</span></span>
-            <input id="set-apibase" type="text" placeholder="https://api.deepseek.com" autocomplete="off" spellcheck="false" />
-          </label>
-          <label class="field">
-            <span class="field-label"><span>模型</span></span>
-            <select id="set-model">
-              <option value="deepseek-chat">deepseek-chat</option>
-              <option value="deepseek-reasoner">deepseek-reasoner</option>
-              <option value="__custom__">自定义…</option>
-            </select>
-            <input id="set-model-custom" type="text" class="hidden" placeholder="输入自定义模型名" autocomplete="off" spellcheck="false" />
-          </label>
-          <label class="field">
-            <span class="field-label"><span>温度</span><span id="set-temp-val" class="field-value">0.7</span></span>
-            <input id="set-temp" type="range" min="0" max="2" step="0.1" />
-          </label>
-          <label class="field">
-            <span class="field-label"><span>工作目录</span></span>
-            <span class="field-row">
-              <input id="set-workspace" type="text" placeholder="/Users/you/项目目录" autocomplete="off" spellcheck="false" />
-              <button id="set-pick" type="button" class="btn">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                <span>选择目录</span>
-              </button>
-            </span>
-          </label>
         </div>
-        <footer class="modal-foot">
-          <button id="btn-test" type="button" class="btn push">测试连接</button>
-          <button id="btn-save" type="button" class="btn primary">保存</button>
-        </footer>
-      </div>
+        <div class="topbar-right">
+          <button id="btn-update" type="button" class="btn btn-ghost btn-sm">检查更新</button>
+          <span id="status-pill" class="pill">
+            <span class="pill-dot"></span>
+            <span id="status-text">加载中…</span>
+          </span>
+        </div>
+      </header>
+
+      <main>
+        <!-- ── 状态主卡 ───────────────────────────────────────── -->
+        <section class="card hero">
+          <div class="hero-main">
+            <span id="hero-dot" class="dot"></span>
+            <div class="hero-text">
+              <h1 id="hero-title">正在读取运行状态…</h1>
+              <p id="hero-msg">—</p>
+            </div>
+          </div>
+
+          <div class="hero-actions">
+            <button id="btn-start" type="button" class="btn primary">启动</button>
+            <button id="btn-stop" type="button" class="btn">停止</button>
+            <button id="btn-restart" type="button" class="btn">重启</button>
+            <span class="spacer"></span>
+            <button id="btn-open-window" type="button" class="btn primary">打开界面</button>
+            <button id="btn-open-browser" type="button" class="btn">浏览器打开</button>
+          </div>
+
+          <div class="hero-url">
+            <span class="k">访问地址</span>
+            <code id="url-text">—</code>
+            <button id="btn-copy" type="button" class="btn btn-sm" disabled>复制</button>
+          </div>
+        </section>
+
+        <div class="grid">
+          <!-- ── 运行信息 ─────────────────────────────────────── -->
+          <section class="card">
+            <h2 class="card-title">运行信息</h2>
+            <dl class="kv">
+              <dt>运行时</dt>
+              <dd id="info-runtime">—</dd>
+              <dt>Node</dt>
+              <dd id="info-node">—</dd>
+              <dt>DSH 目录</dt>
+              <dd id="info-dir" class="wrap">—</dd>
+              <dt>数据目录</dt>
+              <dd id="info-home" class="wrap">—</dd>
+            </dl>
+            <div class="card-foot">
+              <span class="hint">运行时随安装包分发，无需安装 Node 环境</span>
+              <button id="btn-install" type="button" class="btn btn-sm">校验运行时</button>
+            </div>
+          </section>
+
+          <!-- ── 设置 ─────────────────────────────────────────── -->
+          <section class="card">
+            <h2 class="card-title">设置</h2>
+            <div class="form">
+              <label class="field">
+                <span class="field-label">监听端口</span>
+                <input id="f-port" type="number" min="1024" max="65535" step="1" />
+              </label>
+
+              <label class="field">
+                <span class="field-label">打开方式</span>
+                <select id="f-open-mode">
+                  <option value="window">应用内独立窗口</option>
+                  <option value="browser">系统浏览器</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span class="field-label">工作目录</span>
+                <span class="row">
+                  <input id="f-workspace" type="text" spellcheck="false" autocomplete="off" />
+                  <button id="btn-pick-ws" type="button" class="btn btn-sm">选择</button>
+                </span>
+              </label>
+
+              <label class="field">
+                <span class="field-label">DSH_HOME（可选）</span>
+                <input
+                  id="f-dsh-home"
+                  type="text"
+                  placeholder="留空使用应用数据目录"
+                  spellcheck="false"
+                  autocomplete="off"
+                />
+              </label>
+
+              <label class="check">
+                <input id="f-auto" type="checkbox" />
+                <span>应用启动时自动运行 DSH</span>
+              </label>
+            </div>
+            <div class="card-foot">
+              <span id="save-hint" class="hint"></span>
+              <button id="btn-save" type="button" class="btn primary btn-sm">保存设置</button>
+            </div>
+          </section>
+        </div>
+
+        <!-- ── 日志 ───────────────────────────────────────────── -->
+        <section class="card">
+          <div class="card-head">
+            <h2 class="card-title">运行日志</h2>
+            <div class="card-head-actions">
+              <label class="check small">
+                <input id="f-autoscroll" type="checkbox" checked />
+                <span>自动滚动</span>
+              </label>
+              <button id="btn-clear-log" type="button" class="btn btn-sm">清屏</button>
+            </div>
+          </div>
+          <pre id="log" class="log">（暂无日志）</pre>
+        </section>
+      </main>
+
+      <footer id="foot">
+        <span>Claw Lite · Electron + 内置 DSH 运行时，用户无需安装 Node 环境</span>
+        <span id="foot-version"></span>
+      </footer>
     </div>
 
-    <!-- 确认弹窗 -->
-    <div id="confirm-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
-      <div class="modal-card modal-sm">
-        <h3 id="confirm-title">确认操作</h3>
-        <p id="confirm-detail"></p>
-        <footer class="modal-foot">
-          <button id="confirm-cancel" type="button" class="btn">取消</button>
-          <button id="confirm-ok" type="button" class="btn primary">确认</button>
-        </footer>
-      </div>
-    </div>
-
-    <div id="toast" class="hidden"></div>
+    <div id="toast" class="toast hidden"></div>
 
     <script type="module" src="/src/main.js"></script>
   </body>

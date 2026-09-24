@@ -1,7 +1,12 @@
 # Git
 node_modules/
 dist/
-src-tauri/target/
-src-tauri/gen/schemas/
+release/
 .DS_Store
 *.log
+
+# 内置 DSH 运行时（约 280MB，由 npm run runtime 生成，不入库）
+resources/dsh/
+
+# 打包产物
+release/

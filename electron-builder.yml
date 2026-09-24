@@ -1,0 +1,78 @@
+appId: com.trexwb.clawlite
+productName: Claw Lite
+copyright: Copyright © 2026 trexwb
+
+directories:
+  output: release
+  buildResources: build
+
+# 只打包渲染进程产物与主进程代码；DSH 运行时走 extraResources
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+  - "!**/*.{map,md,ts,tsx}"
+
+# DSH 依赖树随包分发（约 280MB），置于 Resources/dsh，
+# 不打进 asar：内含原生模块（.node）需以真实文件形式存在。
+# 排除 node/node.exe —— Electron 自带 Node 运行时，无需外挂解释器。
+extraResources:
+  - from: resources/dsh
+    to: dsh
+    filter:
+      - "**/*"
+      - "!node"
+      - "!node.exe"
+
+asar: true
+compression: maximum
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.png
+  # 产物名统一用连字符：含空格的名称在 GitHub Release 下载 URL 中会被转义 / 替换，
+  # 导致 electron-updater 按清单里的 url 下载时 404。productName 仍保留空格（仅显示用）。
+  artifactName: Claw-Lite-${version}-${arch}.${ext}
+  darkModeSupport: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  target:
+    - target: dmg
+    - target: zip
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+win:
+  icon: build/icon.png
+  artifactName: Claw-Lite-Setup-${version}.${ext}
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Claw Lite
+
+linux:
+  icon: build/icon.png
+  category: Development
+  artifactName: Claw-Lite-${version}-${arch}.${ext}
+  target:
+    - AppImage
+
+publish:
+  provider: github
+  owner: trexwb
+  repo: clawLite

@@ -1,247 +1,315 @@
-// Claw Lite · 装配层：初始化 / 发送流程 / 事件绑定
-import { invoke } from "./core/bridge.js";
-import { Store } from "./core/store.js";
-import { runAssistantTurn } from "./core/ai.js";
-import { renderSidebar, bindNewTask } from "./ui/sidebar.js";
-import { renderSession, appendMessageEl, updateMessageEl, clearChat, setStreaming } from "./ui/chat.js";
-import { openSettings, showConfirm, toast } from "./ui/settings.js";
+/* ═══════════════════════════════════════════════════════════════════
+   Claw Lite — 运行时控制台前端
+   ───────────────────────────────────────────────────────────────────
+   与 Electron 主进程契约（preload 暴露的 window.clawLite）：
+     方法  snapshot / start / stop / restart / verify / clearLogs
+           saveSettings / open / pickDirectory / checkUpdate
+           relaunch / appInfo
+     事件  onState → Snapshot
+           onLog   → String（单行，空串表示清屏）
+   ═══════════════════════════════════════════════════════════════════ */
 
-const input = document.getElementById("input");
-const btnSend = document.getElementById("btn-send");
-const btnStop = document.getElementById("btn-stop");
-const btnSettings = document.getElementById("btn-settings");
-const btnWorkspace = document.getElementById("btn-workspace");
-const wsChip = document.getElementById("ws-chip");
-const workspaceLabel = document.getElementById("workspace-label");
-const sessionTitle = document.getElementById("session-title");
-const chatCol = document.getElementById("chat-col");
+const api = (typeof window !== 'undefined' && window.clawLite) || null
+const IS_DESKTOP = !!api
 
-let controller = null;
-let sending = false;
+const $ = (id) => document.getElementById(id)
 
-function uid() {
-  return typeof crypto !== "undefined" && crypto.randomUUID
-    ? crypto.randomUUID()
-    : "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const el = {
+  statusPill: $('status-pill'),
+  statusText: $('status-text'),
+  heroDot: $('hero-dot'),
+  heroTitle: $('hero-title'),
+  heroMsg: $('hero-msg'),
+  urlText: $('url-text'),
+  btnCopy: $('btn-copy'),
+  btnStart: $('btn-start'),
+  btnStop: $('btn-stop'),
+  btnRestart: $('btn-restart'),
+  btnOpenWindow: $('btn-open-window'),
+  btnOpenBrowser: $('btn-open-browser'),
+  btnInstall: $('btn-install'),
+  btnSave: $('btn-save'),
+  btnPickWs: $('btn-pick-ws'),
+  btnClearLog: $('btn-clear-log'),
+  btnUpdate: $('btn-update'),
+  infoRuntime: $('info-runtime'),
+  infoNode: $('info-node'),
+  infoDir: $('info-dir'),
+  infoHome: $('info-home'),
+  fPort: $('f-port'),
+  fOpenMode: $('f-open-mode'),
+  fWorkspace: $('f-workspace'),
+  fDshHome: $('f-dsh-home'),
+  fAuto: $('f-auto'),
+  fAutoscroll: $('f-autoscroll'),
+  saveHint: $('save-hint'),
+  log: $('log'),
+  toast: $('toast'),
+  footVersion: $('foot-version'),
 }
 
-function activeSession() {
-  return Store.getSession(Store.getActiveId());
+let snapshot = null
+let logEmpty = true
+
+/* ── 通用工具 ──────────────────────────────────────────────────── */
+
+let toastTimer = null
+function toast(msg, isErr = false) {
+  el.toast.textContent = msg
+  el.toast.classList.toggle('err', isErr)
+  el.toast.classList.remove('hidden')
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => el.toast.classList.add('hidden'), 3200)
 }
 
-/* ---------------- 渲染 ---------------- */
-
-function loadSession() {
-  const s = activeSession();
-  clearChat();
-  renderSession(s);
-  sessionTitle.textContent = (s && s.title) || "新任务";
+/** 命令名 → preload 方法映射，保持原有调用点不变 */
+const COMMANDS = {
+  harness_snapshot: () => api.snapshot(),
+  harness_start: () => api.start(),
+  harness_stop: () => api.stop(),
+  harness_restart: () => api.restart(),
+  harness_install: () => api.verify(),
+  harness_clear_logs: () => api.clearLogs(),
+  harness_save_settings: (args) => api.saveSettings(args?.settings),
+  harness_open: (args) => api.open(args?.mode),
 }
 
-function refreshSidebar() {
-  renderSidebar(Store, {
-    onSelect,
-    onDelete,
-    onRename,
-  });
+async function call(cmd, args) {
+  if (!api) throw new Error('当前不在桌面应用环境中')
+  const fn = COMMANDS[cmd]
+  if (!fn) throw new Error(`未知命令：${cmd}`)
+  return fn(args)
 }
 
-function refreshWsUi() {
-  const ws = (Store.config && Store.config.workspacePath) || "";
-  const base = ws ? ws.split("/").filter(Boolean).pop() : "";
-  wsChip.textContent = ws ? base || ws : "未设置工作目录";
-  wsChip.title = ws || "点击设置工作目录";
-  wsChip.classList.toggle("warn", !ws);
-  workspaceLabel.textContent = ws ? base || ws : "未设置工作目录";
+/* ── 渲染 ──────────────────────────────────────────────────────── */
+
+const STATE_LABEL = {
+  notInstalled: '运行时缺失',
+  stopped: '已就绪 · 未启动',
+  starting: '正在启动…',
+  running: '运行中',
+  error: '启动失败',
 }
 
-/* ---------------- 会话操作 ---------------- */
+function render(snap) {
+  if (!snap) return
+  snapshot = snap
 
-function onSelect(id) {
-  if (sending) { toast("当前任务还在进行中，请先停止", "err"); return; }
-  if (id === Store.getActiveId()) return;
-  Store.setActive(id);
-  loadSession();
-  refreshSidebar();
+  const state = snap.state || 'stopped'
+  const label = STATE_LABEL[state] || state
+
+  el.heroDot.className = `dot ${state}`
+  el.statusPill.className = `pill ${state}`
+  el.statusText.textContent = label
+  el.heroTitle.textContent = label
+  el.heroMsg.textContent = snap.message || '—'
+
+  el.urlText.textContent = snap.url || '—'
+  el.btnCopy.disabled = !snap.url
+
+  // 按钮可用性
+  const busy = !!snap.starting
+  el.btnStart.disabled = busy || snap.running || !snap.installed
+  el.btnStop.disabled = busy || !snap.running
+  el.btnRestart.disabled = busy || !snap.installed
+  el.btnOpenWindow.disabled = !snap.running || !snap.url
+  el.btnOpenBrowser.disabled = !snap.running || !snap.url
+  el.btnInstall.disabled = busy
+  el.btnSave.disabled = busy
+
+  // 运行信息
+  el.infoRuntime.textContent = snap.installed
+    ? `DSH ${snap.dshVersion || '未知'}`
+    : '未检测到内置运行时'
+  el.infoNode.textContent = snap.nodeVersion
+    ? `Node ${snap.nodeVersion} · ${snap.runtimeKind || 'Electron 内置'}`
+    : '—'
+  el.infoDir.textContent = snap.dshDir || '—'
+  el.infoHome.textContent = snap.dshHome || '—'
+
+  // 设置（仅在未聚焦时回填，避免打断输入）
+  const s = snap.settings || {}
+  if (document.activeElement !== el.fPort) el.fPort.value = s.port ?? 8799
+  if (document.activeElement !== el.fWorkspace) el.fWorkspace.value = s.workspace || ''
+  if (document.activeElement !== el.fDshHome) el.fDshHome.value = s.dshHome || ''
+  el.fOpenMode.value = s.openMode || 'window'
+  el.fAuto.checked = !!s.autoStart
+
+  el.footVersion.textContent = snap.dshVersion ? `dsh ${snap.dshVersion}` : ''
 }
 
-function onNew() {
-  if (sending) { toast("当前任务还在进行中，请先停止", "err"); return; }
-  const s = Store.createSession();
-  loadSession();
-  refreshSidebar();
-  input.focus();
-  return s;
-}
-
-async function onDelete(id) {
-  if (sending) { toast("当前任务还在进行中，请先停止", "err"); return; }
-  const s = Store.getSession(id);
-  const ok = await showConfirm({
-    title: "删除任务",
-    detail: "确定删除「" + ((s && s.title) || "新任务") + "」？聊天记录不可恢复。",
-  });
-  if (!ok) return;
-  Store.deleteSession(id);
-  if (!Store.getActiveId() || !Store.getSession(Store.getActiveId())) {
-    if (!Store.listSessions().length) Store.createSession();
+function logLine(text, kind) {
+  if (logEmpty) {
+    el.log.textContent = ''
+    logEmpty = false
   }
-  loadSession();
-  refreshSidebar();
+  const span = document.createElement('span')
+  if (kind) span.className = kind
+  span.textContent = text + '\n'
+  el.log.appendChild(span)
+  if (el.fAutoscroll.checked) el.log.scrollTop = el.log.scrollHeight
 }
 
-function onRename(id, title) {
-  Store.renameSession(id, title);
-  if (id === Store.getActiveId()) sessionTitle.textContent = title;
-  refreshSidebar();
+function classify(line) {
+  if (line.startsWith('[claw-lite]')) return 'l-claw'
+  if (/error|错误|失败|Error:/i.test(line)) return 'l-err'
+  return null
 }
 
-/* ---------------- 发送 ---------------- */
-
-function autosize() {
-  input.style.height = "auto";
-  input.style.height = Math.min(input.scrollHeight, 168) + "px";
+function rebuildLog(lines) {
+  el.log.textContent = ''
+  logEmpty = true
+  if (!lines || !lines.length) {
+    el.log.textContent = '（暂无日志）'
+    logEmpty = true
+    return
+  }
+  for (const l of lines) logLine(l, classify(l))
 }
 
-async function send() {
-  const text = input.value.trim();
-  if (!text || sending) return;
-  if (!Store.config || !Store.config.workspacePath) {
-    toast("请先设置工作目录", "err");
-    openSettings(Store, { onSaved: refreshWsUi });
-    return;
+/* ── 交互 ──────────────────────────────────────────────────────── */
+
+async function guard(fn, okMsg) {
+  try {
+    await fn()
+    if (okMsg) toast(okMsg)
+  } catch (e) {
+    toast(String(e?.message || e), true)
+  }
+}
+
+function bind() {
+  el.btnStart.addEventListener('click', () =>
+    guard(() => call('harness_start'), '正在启动 DSH 服务…')
+  )
+  el.btnStop.addEventListener('click', () => guard(() => call('harness_stop'), '已停止 DSH'))
+  el.btnRestart.addEventListener('click', () =>
+    guard(() => call('harness_restart'), '正在重启…')
+  )
+  el.btnOpenWindow.addEventListener('click', () =>
+    guard(() => call('harness_open', { mode: 'window' }))
+  )
+  el.btnOpenBrowser.addEventListener('click', () =>
+    guard(() => call('harness_open', { mode: 'browser' }))
+  )
+  el.btnInstall.addEventListener('click', () =>
+    guard(async () => {
+      const msg = await call('harness_install')
+      toast(msg)
+    })
+  )
+  el.btnClearLog.addEventListener('click', () =>
+    guard(async () => {
+      await call('harness_clear_logs')
+      rebuildLog([])
+    })
+  )
+
+  el.btnCopy.addEventListener('click', async () => {
+    if (!snapshot?.url) return
+    try {
+      await navigator.clipboard.writeText(snapshot.url)
+      toast('访问地址已复制')
+    } catch {
+      toast('复制失败，请手动选择', true)
+    }
+  })
+
+  el.btnPickWs.addEventListener('click', () =>
+    guard(async () => {
+      const picked = await api.pickDirectory()
+      if (typeof picked === 'string' && picked) el.fWorkspace.value = picked
+    })
+  )
+
+  el.btnSave.addEventListener('click', () =>
+    guard(async () => {
+      const settings = {
+        port: Number(el.fPort.value) || 8799,
+        autoStart: el.fAuto.checked,
+        openMode: el.fOpenMode.value,
+        dshHome: el.fDshHome.value.trim(),
+        workspace: el.fWorkspace.value.trim(),
+      }
+      const snap = await call('harness_save_settings', { settings })
+      render(snap)
+      el.saveHint.textContent = '已保存'
+      setTimeout(() => (el.saveHint.textContent = ''), 2400)
+      toast('设置已保存')
+    })
+  )
+
+  el.btnUpdate.addEventListener('click', () => guard(checkUpdate))
+}
+
+/* ── 自动更新 ──────────────────────────────────────────────────── */
+
+async function checkUpdate() {
+  if (!api) {
+    toast('仅在桌面应用中支持检查更新', true)
+    return
+  }
+  el.btnUpdate.disabled = true
+  el.btnUpdate.textContent = '检查中…'
+  try {
+    const res = await api.checkUpdate()
+    toast(res?.message || '已检查更新', !res?.ok)
+  } catch (e) {
+    toast(`更新检查失败：${e?.message || e}`, true)
+  } finally {
+    el.btnUpdate.disabled = false
+    el.btnUpdate.textContent = '检查更新'
+  }
+}
+
+/* ── 启动 ──────────────────────────────────────────────────────── */
+
+async function boot() {
+  bind()
+
+  if (!IS_DESKTOP) {
+    // 浏览器预览模式：给出静态占位，便于 `npm run dev` 查看界面
+    render({
+      installed: false,
+      running: false,
+      starting: false,
+      state: 'stopped',
+      message: '浏览器预览模式（未运行在 Electron 桌面应用中）',
+      dshVersion: '',
+      nodeVersion: '',
+      runtimeKind: '',
+      url: '',
+      nodeBin: '',
+      dshDir: '',
+      dshHome: '',
+      workspace: '',
+      logs: [],
+      settings: { port: 8799, autoStart: false, openMode: 'window', dshHome: '', workspace: '' },
+    })
+    rebuildLog([])
+    el.btnUpdate.classList.add('hidden')
+    return
   }
 
-  const session = activeSession() || onNew();
-  const userMsg = { id: uid(), role: "user", content: text, createdAt: Date.now() };
-  Store.appendMessage(session.id, userMsg);
+  api.onState((snap) => {
+    const prevCount = snapshot?.logs?.length ?? -1
+    render(snap)
+    if (prevCount === -1 || snap.logs.length < prevCount) rebuildLog(snap.logs)
+  })
 
-  // 首条用户消息自动作为会话标题（前 20 字）
-  if (session.messages.filter((m) => m.role === "user").length === 1) {
-    Store.renameSession(session.id, text.slice(0, 20));
-  }
-  sessionTitle.textContent = session.title;
-  refreshSidebar();
-
-  // 历史快照（只含文本；空的 assistant 占位不进历史）
-  const history = session.messages
-    .filter((m) => m.role === "user" || (m.role === "assistant" && (m.content || "").trim()))
-    .map((m) => ({ role: m.role, content: m.content }));
-
-  const aiMsg = { id: uid(), role: "assistant", content: "", toolEvents: [], createdAt: Date.now() };
-  Store.appendMessage(session.id, aiMsg);
-
-  input.value = "";
-  autosize();
-
-  setStreaming(aiMsg.id);
-  appendMessageEl(userMsg);
-  appendMessageEl(aiMsg);
-
-  sending = true;
-  controller = new AbortController();
-  btnSend.classList.add("hidden");
-  btnStop.classList.remove("hidden");
+  api.onLog((line) => {
+    if (!line) {
+      rebuildLog([])
+      return
+    }
+    logLine(line, classify(line))
+  })
 
   try {
-    const { content } = await runAssistantTurn({
-      messages: history,
-      config: Store.config,
-      onDelta: (t) => {
-        aiMsg.content += t; // onDelta 为增量 chunk
-        updateMessageEl(aiMsg);
-      },
-      onToolEvent: (evt) => {
-        if (evt.type === "start") aiMsg.toolEvents.push({ name: evt.name, args: evt.args, ok: null });
-        else aiMsg.toolEvents.push({ name: evt.name, ok: !!evt.ok, brief: evt.brief, args: evt.args });
-        updateMessageEl(aiMsg);
-      },
-      signal: controller.signal,
-      onConfirmDelete: (args) =>
-        controller.signal.aborted
-          ? Promise.resolve(false) // 已中止：直接拒绝，避免删除确认卡住停止流程
-          : showConfirm({
-              title: "确认删除",
-              detail: "即将删除「" + ((args && args.path) || "（未知路径）") + "」，目录会连同其中全部内容一起删除，且不可恢复。确定继续吗？",
-            }),
-    });
-    aiMsg.content = content || aiMsg.content;
-  } catch (err) {
-    const isAbort = err && (err.name === "AbortError" || /abort/i.test(String(err && err.message)));
-    if (isAbort) {
-      aiMsg.content += "\n\n（已停止）";
-    } else {
-      const msg = "⚠ " + (err && err.message ? err.message : "发生未知错误");
-      aiMsg.content = aiMsg.content ? aiMsg.content + "\n\n" + msg : msg;
-      toast(err && err.message ? err.message : "发生未知错误", "err");
-    }
-  } finally {
-    sending = false;
-    controller = null;
-    setStreaming(null);
-    btnStop.classList.add("hidden");
-    btnSend.classList.remove("hidden");
-    const el = chatCol.querySelector('.msg[data-id="' + aiMsg.id + '"]');
-    if (el) el.classList.remove("msg-streaming");
-    updateMessageEl(aiMsg);
-    Store.persist();
+    render(await call('harness_snapshot'))
+  } catch (e) {
+    toast(`读取运行状态失败：${e?.message || e}`, true)
   }
 }
 
-/* ---------------- 事件绑定 ---------------- */
-
-input.addEventListener("keydown", (e) => {
-  // Enter 发送；Shift / Ctrl / ⌘ + Enter 换行；中文输入法组词中的 Enter 不发送
-  if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.isComposing) {
-    e.preventDefault();
-    send();
-  }
-});
-input.addEventListener("input", autosize);
-btnSend.addEventListener("click", send);
-btnStop.addEventListener("click", () => controller && controller.abort());
-btnSettings.addEventListener("click", () => openSettings(Store, { onSaved: refreshWsUi }));
-btnWorkspace.addEventListener("click", () => openSettings(Store, { onSaved: refreshWsUi }));
-wsChip.addEventListener("click", () => openSettings(Store, { onSaved: refreshWsUi }));
-
-chatCol.addEventListener("click", (e) => {
-  const chip = e.target.closest(".chip");
-  if (!chip) return;
-  if (sending) { toast("当前任务还在进行中", "err"); return; }
-  input.value = chip.dataset.suggest || chip.textContent || "";
-  autosize();
-  send();
-});
-
-bindNewTask(onNew);
-
-/* ---------------- 初始化 ---------------- */
-
-async function init() {
-  Store.load();
-  await Store.initConfig();
-
-  if (Store.config && Store.config.workspacePath) {
-    try {
-      await invoke("set_workspace", { path: Store.config.workspacePath });
-    } catch (e) {
-      toast(String(e && e.message ? e.message : e), "err");
-    }
-  }
-
-  if (!Store.getSession(Store.getActiveId())) {
-    if (Store.listSessions().length) Store.setActive(Store.listSessions()[0].id);
-    else Store.createSession();
-  }
-
-  refreshSidebar();
-  loadSession();
-  refreshWsUi();
-
-  // 首次使用：未配置 Key 或工作目录时自动打开设置
-  if (!Store.config.apiKey || !Store.config.workspacePath) {
-    openSettings(Store, { onSaved: refreshWsUi });
-  }
-}
-
-init();
+boot()
