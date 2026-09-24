@@ -86,13 +86,28 @@ function createMainWindow() {
     mainWindow.loadFile(path.join(APP_ROOT, 'dist', 'index.html'))
   }
 
-  const persist = () => {
+  // 窗口几何落盘：拖动 / 缩放期间 resize·move 按帧触发，逐事件同步写盘
+  // 会造成大量冗余 IO。此处合并为 400ms 防抖，并在窗口关闭前补一次同步落盘，
+  // 避免「刚拖完就退出」丢失最后位置。
+  let persistTimer = null
+  const persistNow = () => {
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) return
     store.save({ windowBounds: mainWindow.getNormalBounds() })
   }
-  mainWindow.on('resize', persist)
-  mainWindow.on('move', persist)
-  mainWindow.on('closed', () => { mainWindow = null })
+  const persistSoon = () => {
+    clearTimeout(persistTimer)
+    persistTimer = setTimeout(persistNow, 400)
+  }
+  mainWindow.on('resize', persistSoon)
+  mainWindow.on('move', persistSoon)
+  mainWindow.on('close', () => {
+    clearTimeout(persistTimer)
+    persistNow()
+  })
+  mainWindow.on('closed', () => {
+    clearTimeout(persistTimer)
+    mainWindow = null
+  })
 
   // 外部链接交给系统浏览器，不在应用内开新窗
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -130,6 +145,19 @@ function openWebWindow() {
     if (/^https?:/i.test(url)) shell.openExternal(url)
     return { action: 'deny' }
   })
+  // 仅放行与当前 dsh 服务同源的站内导航；页面内点击外链时改交系统浏览器，
+  // 避免宿主窗口（持久分区 persist:dsh-web）被导航到任意外部站点。
+  webWindow.webContents.on('will-navigate', (event, url) => {
+    let sameOrigin = false
+    try {
+      sameOrigin = !!harness.url && new URL(url).origin === new URL(harness.url).origin
+    } catch {
+      sameOrigin = false
+    }
+    if (sameOrigin) return
+    event.preventDefault()
+    if (/^https?:/i.test(url)) shell.openExternal(url)
+  })
 }
 
 /* ── 广播 ───────────────────────────────────────────────────────── */
@@ -157,6 +185,11 @@ function getUpdater() {
     const { autoUpdater } = require('electron-updater')
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
+    // 后台下载阶段若抛出 'error' 事件而无人监听，EventEmitter 会抛未处理异常
+    // 直接崩溃主进程；try/catch 只能覆盖 checkForUpdates() 的同步/await 段。
+    autoUpdater.on('error', (err) => {
+      harness.log(`[claw-lite] ⚠ 自动更新失败：${err?.message || err}`)
+    })
     updater = autoUpdater
     return updater
   } catch {
@@ -211,18 +244,23 @@ function registerIpc() {
   })
 
   ipcMain.handle('harness:saveSettings', (_e, settings) => {
+    const port = Number(settings?.port)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return { ok: false, error: '监听端口需为 1-65535 之间的整数', snap: harness.snapshot() }
+    }
     const patch = {
-      port: Number(settings?.port) || 8799,
+      port,
       autoStart: !!settings?.autoStart,
       openMode: settings?.openMode === 'browser' ? 'browser' : 'window',
       workspace: String(settings?.workspace || '').trim(),
       dshHome: String(settings?.dshHome || '').trim(),
     }
-    store.save(patch)
+    // 写盘结果回传渲染层：此前静默吞错，用户会看到「已保存」但重启后设置回退。
+    const saved = store.save(patch)
     harness.settings = { ...harness.settings, ...patch }
     const snap = harness.snapshot()
     broadcast('harness:state', snap)
-    return snap
+    return { ok: saved.ok !== false, error: saved.error || '', snap }
   })
 
   ipcMain.handle('harness:open', async (_e, mode) => {
@@ -245,8 +283,10 @@ function registerIpc() {
   ipcMain.handle('updater:check', () => checkForUpdates())
 
   ipcMain.handle('app:relaunch', () => {
+    // 用 app.quit() 而非 app.exit(0)：exit 不触发 before-quit，
+    // dsh 子进程不会被优雅停止，重启后会残留孤儿进程。
     app.relaunch()
-    app.exit(0)
+    app.quit()
   })
 
   ipcMain.handle('app:info', () => ({
@@ -368,6 +408,7 @@ if (!app.requestSingleInstanceLock()) {
       userDataDir: app.getPath('userData'),
     })
     harness.settings = { ...harness.settings, ...store.all }
+    if (store.loadError) harness.log(`[claw-lite] ⚠ ${store.loadError}`)
 
     wireHarness()
     registerIpc()

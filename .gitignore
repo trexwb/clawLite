@@ -27,6 +27,8 @@ release/
 .trae/*
 .codex
 .codex/*
+.openclaw/
+.openclaw/*
 .dumate
 .dumate/*
 .cluster/

@@ -36,8 +36,8 @@
         </div>
         <div class="topbar-right">
           <button id="btn-update" type="button" class="btn btn-ghost btn-sm">检查更新</button>
-          <span id="status-pill" class="pill">
-            <span class="pill-dot"></span>
+          <span id="status-pill" class="pill" role="status" aria-live="polite">
+            <span class="pill-dot" aria-hidden="true"></span>
             <span id="status-text">加载中…</span>
           </span>
         </div>
@@ -48,7 +48,8 @@
         <section class="card hero">
           <div class="hero-main">
             <span id="hero-dot" class="dot"></span>
-            <div class="hero-text">
+            <!-- 状态主卡作为读屏播报区：标题与说明变化时统一播报 -->
+            <div class="hero-text" role="status" aria-live="polite">
               <h1 id="hero-title">正在读取运行状态…</h1>
               <p id="hero-msg">—</p>
             </div>
@@ -150,7 +151,7 @@
               <button id="btn-clear-log" type="button" class="btn btn-sm">清屏</button>
             </div>
           </div>
-          <pre id="log" class="log">（暂无日志）</pre>
+          <pre id="log" class="log" role="log" aria-live="polite" aria-label="运行日志">（暂无日志）</pre>
         </section>
       </main>
 
@@ -160,7 +161,8 @@
       </footer>
     </div>
 
-    <div id="toast" class="toast hidden"></div>
+    <!-- 提示条：屏幕阅读器可感知（不打断当前朗读，故用 polite） -->
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
     <script type="module" src="/src/main.js"></script>
   </body>

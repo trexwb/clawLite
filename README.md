@@ -50,7 +50,7 @@ npm start              # 构建渲染层 + 启动应用
 
 ```bash
 npm run dev            # Vite dev server
-CLAWLITE_DEV_SERVER=http://localhost:1420 npm run electron
+CLAWLITE_DEV_SERVER=http://localhost:5173 npm run electron
 ```
 
 ## 安装（终端用户）
