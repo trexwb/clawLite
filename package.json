@@ -1,24 +1,31 @@
 {
   "name": "claw-lite",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
-  "description": "Claw Lite - 参考 AutoClaw 的极简桌面 AI 助手（DeepSeek + 本地目录办公）",
+  "description": "Claw Lite — DeepSeek Harness 桌面宿主（Electron，内置 DSH 运行时，用户免装 Node）",
+  "author": "trexwb",
+  "license": "MIT",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "tauri": "tauri",
-    "check": "node scripts/check.mjs"
+    "build:web": "vite build",
+    "start": "npm run build:web && electron .",
+    "electron": "electron .",
+    "runtime": "node scripts/fetch-runtime.mjs",
+    "runtime:force": "node scripts/fetch-runtime.mjs --force",
+    "check": "node scripts/check.mjs",
+    "dist": "npm run build:web && electron-builder",
+    "dist:mac": "npm run build:web && electron-builder --mac",
+    "dist:win": "npm run build:web && electron-builder --win",
+    "dist:linux": "npm run build:web && electron-builder --linux"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-dialog": "^2.0.0",
-    "@tauri-apps/plugin-http": "^2.0.0"
+    "electron-updater": "^6.3.9"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0",
-    "puppeteer-core": "^25.10.0",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
     "vite": "^6.0.0"
   }
 }

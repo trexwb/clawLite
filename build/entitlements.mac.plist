@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Electron 渲染/V8 需要 -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  <!-- 关键：以 ELECTRON_RUN_AS_NODE 方式执行内置 DSH 脚本、
+       并加载 dsh 依赖树中的原生模块（node-pty/sharp 等） -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <!-- DSH 本地 Web 服务需要监听回环端口 -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <key>com.apple.security.network.server</key>
+  <true/>
+</dict>
+</plist>
