@@ -20,7 +20,15 @@
       <!-- ── 顶栏 ─────────────────────────────────────────────── -->
       <header id="topbar">
         <div class="brand">
-          <span class="brand-mark"></span>
+          <!-- 品牌图标直接复用项目真实图标资源（打包同一份 build/icon.png），
+               由 Vite 构建时复制到 dist/assets 下，避免出现纯色占位块 -->
+          <img
+            class="brand-mark"
+            src="./build/icon.png"
+            alt="Claw Lite 图标"
+            width="26"
+            height="26"
+          />
           <div class="brand-text">
             <strong>Claw Lite</strong>
             <span>DeepSeek Harness 本地运行时</span>

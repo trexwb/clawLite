@@ -21,6 +21,8 @@
   --idle: #5b6472;
   --radius: 12px;
   --radius-sm: 8px;
+  --topbar-h: 62px;
+  --topbar-gutter: 84px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
@@ -59,10 +61,26 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 22px;
+  height: var(--topbar-h);
+  padding: 0 22px;
   border-bottom: 1px solid var(--line-soft);
   background: linear-gradient(180deg, #14171d, #101318);
   flex: none;
+  /* 标题栏为 hiddenInset，窗口没有任何原生拖动区，顶栏整体即拖动区 */
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+/* macOS：交通灯由系统原生绘制在左上角，为品牌区预留左侧安全区，
+   避免关闭按钮与品牌标题重叠（值需与主进程 trafficLightPosition 配套） */
+body.is-mac #topbar {
+  padding-left: var(--topbar-gutter);
+}
+
+/* 顶栏内的交互元素必须退出拖动区，否则点击会被拖动行为吞掉 */
+#topbar button,
+#topbar .pill {
+  -webkit-app-region: no-drag;
 }
 
 .brand {
@@ -71,13 +89,15 @@ body {
   gap: 11px;
 }
 
+/* 品牌图标：项目真实图标资源，不用纯色块占位 */
 .brand-mark {
   width: 26px;
   height: 26px;
   border-radius: 8px;
-  background: radial-gradient(circle at 32% 30%, #ff9d6e, var(--accent) 62%);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 4px 12px rgba(226, 103, 58, 0.28);
   flex: none;
+  display: block;
+  object-fit: contain;
+  -webkit-user-drag: none;
 }
 
 .brand-text {
