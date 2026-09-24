@@ -10,6 +10,7 @@
         渲染层 api.*  →  preload 暴露方法  →  主进程 ipcMain.handle 通道
      5. 内置 DSH 运行时完整性（本地缺失仅告警，CI 在 runtime 步骤后校验）
      6. 无残留 Tauri 依赖
+     7. 状态枚举一致性（harness.setState ↔ 渲染层 STATE_LABEL）
    ═══════════════════════════════════════════════════════════════════ */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -55,6 +56,7 @@ const REQUIRED = [
   "build/icon.png",
   "index.html",
   "src/main.js",
+  "src/styles/main.css",
   "vite.config.js",
   ".github/workflows/release.yml",
 ];
@@ -142,6 +144,29 @@ const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
 const tauriDeps = Object.keys(allDeps).filter((d) => d.includes("tauri"));
 ok("无残留 Tauri 依赖", tauriDeps.length === 0, tauriDeps.join(",") || "clean");
 ok("入口指向 Electron 主进程", pkg.main === "electron/main.cjs", pkg.main || "(未设置)");
+
+/* ── 7) 状态枚举一致性 ─────────────────────────────────────────── */
+// harness.cjs 的 setState 取值必须都能在渲染层 STATE_LABEL 中找到文案，
+// 否则 UI 会直接显示英文状态码（如曾经的 stopping）。
+const harnessSrc = readFileSync(join(root, "electron/harness.cjs"), "utf8");
+const harnessStates = [
+  ...new Set(
+    [...harnessSrc.matchAll(/setState\(([^)]*)\)/g)].flatMap((m) =>
+      [...m[1].matchAll(/'([a-zA-Z]+)'/g)].map((x) => x[1])
+    )
+  ),
+];
+// 渲染层 STATE_LABEL 为「无分号」风格，故块结束符匹配 \n}
+const labelBlock = rendererSrc.match(/const STATE_LABEL\s*=\s*\{([\s\S]*?)\n\}/);
+const labelKeys = [
+  ...new Set([...(labelBlock ? labelBlock[1] : "").matchAll(/(\w+)\s*:/g)].map((m) => m[1])),
+];
+const missingLabels = harnessStates.filter((s) => !labelKeys.includes(s));
+ok(
+  "状态枚举对齐（harness.setState ↔ 渲染层 STATE_LABEL）",
+  harnessStates.length > 0 && !missingLabels.length,
+  missingLabels.join(",") || `${harnessStates.length} 个状态`
+);
 
 console.log(
   fails === 0 ? `\n全部通过 ✔${warns ? `（${warns} 项告警）` : ""}` : `\n${fails} 项失败 ✘`

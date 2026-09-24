@@ -10,3 +10,30 @@ resources/dsh/
 
 # 打包产物
 release/
+
+# mac
+.DS_Store
+
+# ide & ai local files
+.vscode/
+.idea/
+.qwen
+.cursor
+.marvis/
+.marvis/*
+.workbuddy
+.workbuddy/*
+.trae
+.trae/*
+.codex
+.codex/*
+.openclaw/
+.openclaw/*
+.dumate
+.dumate/*
+.cluster/
+.cluster/*
+.tmp/
+.tmp/*
+.zwork/
+.zwork/*

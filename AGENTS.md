@@ -55,10 +55,7 @@ Claw Lite 是 DeepSeek Harness（dsh）的桌面宿主：内置 Electron 自带 
 
 ### 2. 文件操作根目录
 
-本项目所有文件操作默认以以下路径为根目录，**不得偏离**：
-```
-/Users/wbtrex/website/localServer/node/trexwb/git/clawLite/
-```
+本项目所有文件操作默认以**当前 clone 的项目根目录**为根目录，**不得偏离**。路径一律相对项目根解析，**禁止硬编码绝对路径**（不同机器 / 不同 clone 位置的路径不一定相同）。
 
 ### 3. 编辑策略
 
@@ -78,7 +75,7 @@ Claw Lite 是 DeepSeek Harness（dsh）的桌面宿主：内置 Electron 自带 
   - **主进程通道**（`ipcMain.handle`）：`harness:snapshot` / `harness:start` / `harness:stop` / `harness:restart` / `harness:verify` / `harness:clearLogs` / `harness:saveSettings` / `harness:open` / `dialog:pickDirectory` / `updater:check` / `app:relaunch` / `app:info`
   - **广播事件**（`main.cjs` 的 `broadcast`）：`harness:state` / `harness:log`
 - **CSP（index.html）**：`<meta http-equiv="Content-Security-Policy">` 为 `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'`。**禁止**放宽到 `'unsafe-inline'` 脚本、`https:` connect 或外链脚本——保持仅加载本地 `self` 资源。
-- **状态机**（`HarnessManager.state`）：`notInstalled` / `stopped` / `starting` / `running` / `error`，由 `setState()` 统一驱动并经 `harness:state` 广播。
+- **状态机**（`HarnessManager.state`）：`notInstalled` / `stopped` / `starting` / `stopping` / `running` / `error`，由 `setState()` 统一驱动并经 `harness:state` 广播。渲染层 `STATE_LABEL` 必须与之一一对应（`scripts/check.mjs` 会校验），`starting` 与 `stopping` 期间渲染层均视为忙碌、禁用启停按钮。
 - **DSH 启动关键细节（禁止移除）**：spawn 时必须带 `ELECTRON_RUN_AS_NODE=1`（以 Electron 可执行文件作纯 Node 解释器）且命令行首参为 `--expose-internals`（dsh 的 cordis-plugin-hmr 依赖 Node 内部 binding，缺失会导致 web profile 加载失败退出）；`--no-open` 避免 dsh 自行拉起浏览器。
 - **访问地址捕获**：dsh web 就绪时打印 `dsh web: http://127.0.0.1:<port>/?token=xxx`；`HarnessManager._captureUrl` 捕获该带 token 的完整 URL 作为 Web UI 信任凭据，**必须原样保留**（`token` 缺失会被拒）。
 - **设置体系**：`userData/settings.json`（macOS：`~/Library/Application Support/Claw Lite/settings.json`），字段 `port`（默认 8799）/ `autoStart` / `openMode`（`window`|`browser`）/ `workspace` / `dshHome` / `windowBounds`。
@@ -231,12 +228,15 @@ dsh 子进程 stdout → attachPipes → log(line) → _captureUrl(line) 匹配
 - **contextIsolation**：主进程 `contextIsolation: true` + `nodeIntegration: false` + `sandbox: true` 不得关闭
 - **XSS 防护**：渲染层禁止 `innerHTML` 注入未转义内容；DOM 更新用 `textContent`/`createElement`
 - **无外部网络**：本项目不调用任何外部接口（DSH 子进程仅监听 `127.0.0.1`）；自动更新走 electron-updater 自有通道
+- **受信任内容窗口导航加固**：加载 dsh web 的窗口除 `setWindowOpenHandler` 外**必须**同时挂 `will-navigate` 守卫，仅放行与 `harness.url` 同源的站内导航，其余一律 `preventDefault()` 并交系统浏览器——只防 `window.open` 防不住页内 self 导航
+- **异步事件必须有 error 监听**：electron-updater 等基于 EventEmitter 的后台模块须挂 `autoUpdater.on('error', …)`，否则下载阶段异步 error 会以未处理异常击穿主进程（`try/catch` 覆盖不到）
 - **密钥/Token**：DSH Web UI 的访问 token 仅存于内存（`HarnessManager.url`），不落盘、不打印到日志以外的地方
 
 #### 11.6 性能规范
 
-- **日志上限**：`HarnessManager.log` 受 `LOG_LIMIT = 800` 约束，超出截断旧日志
+- **日志上限**：主进程 `HarnessManager.log` 受 `LOG_LIMIT = 800` 约束，超出截断旧日志；渲染层 DOM 保留行数须与之对齐（同为 800，超出从头部裁剪），二者解耦但量级一致
 - **探活节流**：`waitForReady` 轮询间隔 400ms、单次超时 `READY_TIMEOUT_MS = 60_000`，避免忙等
+- **窗口几何写盘**：`resize`/`move` 走 400ms 防抖，窗口 `close` 前必须补一次同步落盘（防「刚拖完即退出」丢位置）
 - **防抖/节流**：高频 UI 事件（如日志追加）保持轻量 DOM 操作；设置回填避免打断输入
 - **无障碍**：支持 `@media (prefers-reduced-motion: reduce)`
 

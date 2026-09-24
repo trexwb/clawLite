@@ -83,10 +83,13 @@ async function call(cmd, args) {
 
 /* ── 渲染 ──────────────────────────────────────────────────────── */
 
+// 与 electron/harness.cjs 的 setState 取值严格对齐
+// （scripts/check.mjs 会校验两处状态枚举一致性）
 const STATE_LABEL = {
   notInstalled: '运行时缺失',
   stopped: '已就绪 · 未启动',
   starting: '正在启动…',
+  stopping: '正在停止…',
   running: '运行中',
   error: '启动失败',
 }
@@ -107,8 +110,9 @@ function render(snap) {
   el.urlText.textContent = snap.url || '—'
   el.btnCopy.disabled = !snap.url
 
-  // 按钮可用性
-  const busy = !!snap.starting
+  // 按钮可用性：停止过程中（state=stopping）同样视为忙碌，
+  // 避免「停止→启动」重入产生孤儿 dsh 子进程与状态误判。
+  const busy = !!snap.starting || state === 'stopping'
   el.btnStart.disabled = busy || snap.running || !snap.installed
   el.btnStop.disabled = busy || !snap.running
   el.btnRestart.disabled = busy || !snap.installed
@@ -138,6 +142,10 @@ function render(snap) {
   el.footVersion.textContent = snap.dshVersion ? `dsh ${snap.dshVersion}` : ''
 }
 
+// DOM 行数上限：长会话下日志节点只增不减会持续占用内存并拖慢渲染，
+// 与主进程 LOG_LIMIT(800) 对齐，超出后从头部裁剪。
+const LOG_DOM_LIMIT = 800
+
 function logLine(text, kind) {
   if (logEmpty) {
     el.log.textContent = ''
@@ -147,6 +155,7 @@ function logLine(text, kind) {
   if (kind) span.className = kind
   span.textContent = text + '\n'
   el.log.appendChild(span)
+  while (el.log.childNodes.length > LOG_DOM_LIMIT) el.log.removeChild(el.log.firstChild)
   if (el.fAutoscroll.checked) el.log.scrollTop = el.log.scrollHeight
 }
 
@@ -231,8 +240,14 @@ function bind() {
         dshHome: el.fDshHome.value.trim(),
         workspace: el.fWorkspace.value.trim(),
       }
-      const snap = await call('harness_save_settings', { settings })
-      render(snap)
+      const res = await call('harness_save_settings', { settings })
+      render(res?.snap || res)
+      if (res && res.ok === false) {
+        el.saveHint.textContent = '保存失败'
+        setTimeout(() => (el.saveHint.textContent = ''), 2400)
+        toast(res.error || '设置保存失败', true)
+        return
+      }
       el.saveHint.textContent = '已保存'
       setTimeout(() => (el.saveHint.textContent = ''), 2400)
       toast('设置已保存')
@@ -298,9 +313,16 @@ async function boot() {
   }
 
   api.onState((snap) => {
+    // 需重建整段日志的两种情况：首次渲染，或主进程日志缓冲已从头部截断
+    // （缓冲区满后行数不再变化，只能靠首行变化识别，否则界面会残留过期行）
     const prevCount = snapshot?.logs?.length ?? -1
+    const prevFirst = snapshot?.logs?.[0]
     render(snap)
-    if (prevCount === -1 || snap.logs.length < prevCount) rebuildLog(snap.logs)
+    const truncated =
+      prevCount === -1 ||
+      snap.logs.length < prevCount ||
+      (snap.logs.length === prevCount && snap.logs[0] !== prevFirst)
+    if (truncated) rebuildLog(snap.logs)
   })
 
   api.onLog((line) => {

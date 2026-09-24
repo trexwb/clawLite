@@ -54,7 +54,11 @@ function pickPort(preferred) {
       })
       srv.listen(port, '127.0.0.1')
     }
-    attempt(Number(preferred) || 0, true)
+    // 端口范围钳制：越界值（负数 / >65535 / NaN）会让 srv.listen 抛 RangeError，
+    // 而该异常位于 start() 的 await 链路中且无捕获点，会击穿调用点，
+    // 使界面永久停留在「正在启动…」且所有按钮被禁用。
+    const p = Math.trunc(Number(preferred))
+    attempt(Number.isFinite(p) && p >= 1 && p <= 65535 ? p : 0, true)
   })
 }
 
@@ -197,15 +201,31 @@ class HarnessManager extends EventEmitter {
     this.setState('starting', '正在启动 DSH 服务…')
     this.log('[claw-lite] 正在启动 DSH 服务…')
 
-    const port = await pickPort(this.settings.port)
-    const url = `http://127.0.0.1:${port}`
-    this.port = port
-    this.url = url
+    // 端口分配与数据目录准备是 spawn 之前仅有的两个可失败步骤，必须自带错误边界：
+    // 否则任一步骤抛错（端口越界 / DSH_HOME 不可写）都会击穿 start() 调用点，
+    // 令 starting 恒为 true、状态停在 starting，界面按钮全禁用且无自愈路径。
+    let port
+    let url
+    let cwd
+    try {
+      port = await pickPort(this.settings.port)
+      url = `http://127.0.0.1:${port}`
+      this.port = port
+      this.url = url
 
-    fs.mkdirSync(this.dshHome, { recursive: true })
-    const cwd = this.settings.workspace && fs.existsSync(this.settings.workspace)
-      ? this.settings.workspace
-      : os.homedir()
+      fs.mkdirSync(this.dshHome, { recursive: true })
+      cwd = this.settings.workspace && fs.existsSync(this.settings.workspace)
+        ? this.settings.workspace
+        : os.homedir()
+    } catch (e) {
+      this.starting = false
+      this._stopping = false
+      this.url = ''
+      const msg = `启动准备失败：${e.message}`
+      this.setState('error', msg)
+      this.log(`[claw-lite] ✗ ${msg}`)
+      return this.snapshot()
+    }
 
     // 关键：ELECTRON_RUN_AS_NODE 让 Electron 可执行文件以纯 Node 模式运行脚本
     const env = {
@@ -258,6 +278,9 @@ class HarnessManager extends EventEmitter {
     })
 
     child.on('exit', (code, signal) => {
+      // 已被新进程接管（restart 等「停→启」竞态）时忽略旧进程的退出事件：
+      // 否则会清掉新进程句柄，并把正在运行的服务误判为「意外退出」。
+      if (this.child !== child) return
       const wasStopping = this._stopping
       this.child = null
       this.starting = false

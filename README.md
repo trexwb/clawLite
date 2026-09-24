@@ -50,7 +50,7 @@ npm start              # 构建渲染层 + 启动应用
 
 ```bash
 npm run dev            # Vite dev server
-CLAWLITE_DEV_SERVER=http://localhost:1420 npm run electron
+CLAWLITE_DEV_SERVER=http://localhost:5173 npm run electron
 ```
 
 ## 安装（终端用户）
@@ -64,7 +64,7 @@ CLAWLITE_DEV_SERVER=http://localhost:1420 npm run electron
 
 > **仍无法打开 / 想一步解除 Gatekeeper 拦截？** 在「终端」执行以下命令移除下载隔离标记（quarantine）后，从「应用程序」重新打开即可：
 > ```bash
-> xattr -dr com.apple.quarantine "/Applications/clawLite.app"
+> xattr -dr com.apple.quarantine "/Applications/Claw Lite.app"
 > ```
 > 该命令仅清除系统给应用打的隔离属性，不修改应用内容；路径需与实际安装包名一致（若按 `productName` 命名为 `Claw Lite.app`，则使用 `/Applications/Claw Lite.app`）。
 
