@@ -52,6 +52,88 @@
             </button>
           </div>
         </footer>
+
+        <!-- DeepSeek Harness 本地运行时控制台 -->
+        <section id="harness-view" class="hidden">
+          <div class="hv-wrap">
+            <header class="hv-head">
+              <div>
+                <h2>DeepSeek Harness</h2>
+                <p class="hv-sub">本地 DSH Web UI 运行时托管 · 安装 / 启停 / 端口 / 日志</p>
+              </div>
+              <button id="hv-refresh" type="button" class="btn">刷新</button>
+            </header>
+
+            <div class="hv-card">
+              <div class="hv-status-top">
+                <span id="hv-dot" class="hv-dot idle"></span>
+                <strong id="hv-state-text">已就绪 · 未启动</strong>
+                <span class="hv-spacer"></span>
+                <span id="hv-version" class="hv-tag">未安装</span>
+              </div>
+              <p id="hv-state" class="hv-msg">—</p>
+              <div class="hv-actions">
+                <button id="hv-install" type="button" class="btn">安装 / 更新运行时</button>
+                <button id="hv-start" type="button" class="btn primary">启动</button>
+                <button id="hv-stop" type="button" class="btn">停止</button>
+                <button id="hv-restart" type="button" class="btn">重启</button>
+              </div>
+              <div class="hv-actions">
+                <button id="hv-open-window" type="button" class="btn primary">打开界面（独立窗口）</button>
+                <button id="hv-open-browser" type="button" class="btn">用浏览器打开</button>
+              </div>
+              <p id="hv-hint" class="hv-hint"></p>
+            </div>
+
+            <div class="hv-card">
+              <h3 class="hv-card-title">运行信息</h3>
+              <dl class="hv-kv">
+                <dt>访问地址</dt>
+                <dd id="hv-url" class="hv-mono">—</dd>
+                <dt>Node</dt>
+                <dd id="hv-node" class="hv-mono">—</dd>
+                <dt>安装目录</dt>
+                <dd id="hv-dir" class="hv-mono">—</dd>
+                <dt>数据目录</dt>
+                <dd id="hv-home" class="hv-mono">—</dd>
+              </dl>
+            </div>
+
+            <div class="hv-card">
+              <h3 class="hv-card-title">设置</h3>
+              <div class="hv-form">
+                <label class="hv-field">
+                  <span class="hv-field-label">监听端口</span>
+                  <input id="hv-port" type="number" min="1024" max="65535" step="1" />
+                </label>
+                <label class="hv-field hv-field-inline">
+                  <span class="hv-field-label">启动时自动运行</span>
+                  <input id="hv-auto" type="checkbox" />
+                </label>
+                <label class="hv-field">
+                  <span class="hv-field-label">打开方式</span>
+                  <select id="hv-open-mode">
+                    <option value="window">独立窗口（推荐）</option>
+                    <option value="browser">系统浏览器</option>
+                  </select>
+                </label>
+                <label class="hv-field">
+                  <span class="hv-field-label">Node 路径（可选，留空自动探测）</span>
+                  <input id="hv-node-path" type="text" placeholder="自动探测" autocomplete="off" spellcheck="false" />
+                </label>
+              </div>
+              <p class="hv-note">DSH 自己的模型 API Key 在 DSH 的 Settings → Models 里填写（首次打开界面后设置），Claw Lite 不代管。</p>
+            </div>
+
+            <div class="hv-card">
+              <div class="hv-card-head">
+                <h3 class="hv-card-title">运行日志</h3>
+                <button id="hv-log-clear" type="button" class="btn btn-sm">清屏</button>
+              </div>
+              <pre id="hv-log" class="hv-log">（暂无日志）</pre>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
 
