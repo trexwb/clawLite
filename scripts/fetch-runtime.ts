@@ -39,7 +39,16 @@ const ROOT = join(HERE, '..')
 const RES_DIR = join(ROOT, 'resources', 'dsh')
 const APP_DIR = join(RES_DIR, 'app')
 
-/** 固定 dsh 版本，保证可复现；升级时改这里 */
+/**
+ * 固定 dsh 版本，保证可复现；升级时改这里。
+ *
+ * ⚠️ 版本约束：0.1.7-rc.2（next 标签）起，dsh 启动必经 dsh-app-boot 的
+ * installRuntimeInterception，其原生依赖 node-addon-require-builtin@0.1.6
+ * 内嵌运行时指纹白名单，仅支持 Electron 43.0.0 / 44.0.0 / 45.0.0-alpha.6。
+ * 本应用使用 Electron ^44.4.5（V8 15.2.124.28），不在白名单内，会导致
+ * "host preparation failed" 致命退出。故暂锁定 0.1.5-rc.3；待 dsh 支持
+ * Electron 44.4.x 或本应用调整 Electron 版本后再升级。
+ */
 const DSH_VERSION = '0.1.5-rc.3'
 
 // ── 参数解析 ───────────────────────────────────────────────────────

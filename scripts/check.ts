@@ -57,6 +57,7 @@ const REQUIRED = [
   'electron/preload.ts',
   'electron/harness.ts',
   'electron/settings.ts',
+  'src/shared/constants.ts',
   'scripts/build-electron.ts',
   'scripts/check.ts',
   'scripts/verify-dist.ts',
@@ -249,29 +250,39 @@ ok(
 )
 
 /* ── 9) 端口范围三方一致 ───────────────────────────────────────── */
-// 输入框约束、主进程 IPC 校验、harness 分配策略必须同源，否则会出现
+// 端口常量已抽至 src/shared/constants.ts（单一来源），主进程与渲染层均从此导入；
+// 此处校验「共享常量 ↔ index.html 输入框约束」两方一致即可，杜绝
 // 「输入框拦住 / 主进程放行 / 渲染层静默改写」三条互不一致的路径。
+const sharedSrc = readFileSync(join(root, 'src/shared/constants.ts'), 'utf8')
 const htmlSrc = readFileSync(join(root, 'index.html'), 'utf8')
 const htmlPort = htmlSrc.match(/id="f-port"[^>]*min="(\d+)"[^>]*max="(\d+)"/)
-const tsPort = harnessSrc.match(/const PORT_MIN\s*=\s*(\d+)[\s\S]*?const PORT_MAX\s*=\s*(\d+)/)
-const tsDefault = harnessSrc.match(/const PORT_DEFAULT\s*=\s*(\d+)/)
-const rendererPorts = [...rendererSrc.matchAll(/const PORT_(MIN|MAX|DEFAULT)\s*=\s*(\d+)/g)].reduce(
-  (acc, m) => ({ ...acc, [m[1]]: m[2] }),
-  {} as Record<string, string>
+const cMin = sharedSrc.match(/export const PORT_MIN\s*=\s*(\d+)/)
+const cMax = sharedSrc.match(/export const PORT_MAX\s*=\s*(\d+)/)
+const cDef = sharedSrc.match(/export const PORT_DEFAULT\s*=\s*(\d+)/)
+ok(
+  '端口范围一致（index.html ↔ src/shared/constants.ts PORT_MIN/MAX）',
+  !!htmlPort &&
+    !!cMin &&
+    !!cMax &&
+    htmlPort[1] === cMin[1] &&
+    htmlPort[2] === cMax[1],
+  htmlPort && cMin && cMax ? `${htmlPort[1]}-${htmlPort[2]} / 常量 ${cMin[1]}-${cMax[1]}` : '未匹配'
 )
 ok(
-  '端口范围一致（index.html ↔ harness.ts PORT_MIN/MAX）',
-  !!htmlPort && !!tsPort && htmlPort[1] === tsPort[1] && htmlPort[2] === tsPort[2],
-  htmlPort && tsPort ? `${htmlPort[1]}-${htmlPort[2]}` : '未匹配到端口声明'
+  'PORT_DEFAULT 落在 [PORT_MIN, PORT_MAX] 区间内',
+  !!cMin &&
+    !!cMax &&
+    !!cDef &&
+    Number(cDef[1]) >= Number(cMin[1]) &&
+    Number(cDef[1]) <= Number(cMax[1]),
+  cDef ? `默认 ${cDef[1]}` : '未匹配'
 )
+// 共享常量文件不得引入 Node 内置模块：渲染层由 Vite 以 browser 上下文打包，
+// 若此处出现 `node:*` 导入，浏览器包会尝试解析 Node API 而构建失败。
 ok(
-  '渲染层端口常量与 harness.ts 同源（PORT_MIN/MAX/DEFAULT）',
-  !!tsPort &&
-    !!tsDefault &&
-    rendererPorts.MIN === tsPort[1] &&
-    rendererPorts.MAX === tsPort[2] &&
-    rendererPorts.DEFAULT === tsDefault[1],
-  `${rendererPorts.MIN ?? '?'}-${rendererPorts.MAX ?? '?'} · 默认 ${rendererPorts.DEFAULT ?? '?'}`
+  'src/shared/constants.ts 无 Node 内置模块导入（纯常量，可安全被渲染层导入）',
+  !/from\s+['"]node:/.test(sharedSrc),
+  /from\s+['"]node:/.test(sharedSrc) ? '发现 node: 导入' : 'clean'
 )
 
 /* ── 10) 安全与无障碍基线硬断言 ───────────────────────────────── */

@@ -1,14 +1,3 @@
----
-AIGC:
-    Label: "1"
-    ContentProducer: 001191440300708461136T1XGW3
-    ProduceID: 75cf1e850e5668c557334a2fa39f707b_e68ab518b87811f19ba1525400638852
-    ReservedCode1: VkRuJlDV7Xx17yW7Py6rYBlcE7pdRdcJ/one0DfbcAXmc7nDoDgpmD8ePn1fWBDojsZ6ifni0Lh5tG8pUWNGsREehrX6WIkfvrZI4LJw2O4tRu9/x4UukrWZiK0PMdTLXA9vLPt9MoXLPYYRpFHii3XlfICI7DEfT+9E+fIBQU2x1OifRggRrvXJdWM=
-    ContentPropagator: 001191440300708461136T1XGW3
-    PropagateID: 75cf1e850e5668c557334a2fa39f707b_e68ab518b87811f19ba1525400638852
-    ReservedCode2: VkRuJlDV7Xx17yW7Py6rYBlcE7pdRdcJ/one0DfbcAXmc7nDoDgpmD8ePn1fWBDojsZ6ifni0Lh5tG8pUWNGsREehrX6WIkfvrZI4LJw2O4tRu9/x4UukrWZiK0PMdTLXA9vLPt9MoXLPYYRpFHii3XlfICI7DEfT+9E+fIBQU2x1OifRggRrvXJdWM=
----
-
 # Claw Lite
 
 **DeepSeek Harness 桌面宿主** —— 把官方 `@deepseek-ai/dsh` 本地化打包进 Electron 应用，

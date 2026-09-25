@@ -1,12 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════
-   Claw Lite — Electron 主进程入口
+   Claw Lite — Electron 主进程入口（ESM）
    ───────────────────────────────────────────────────────────────────
    职责：单实例、窗口、IPC 路由、DSH 生命周期调度、自动更新。
-
-   模块形态：ESM。根 package.json 声明 type:module，产物 dist-electron/main.js
-   按 ESM 加载，故此处不出现 __dirname / require —— 路径基准改用
-   import.meta.url 推导（打包后产物仍在 dist-electron/，与源码同层级，
-   APP_ROOT 的 '..' 语义保持不变）。
    ═══════════════════════════════════════════════════════════════════ */
 
 import { app, BrowserWindow, ipcMain, shell, dialog, Menu } from 'electron'
@@ -14,10 +9,10 @@ import type { MenuItemConstructorOptions } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
-
-import { HarnessManager, PORT_MIN, PORT_MAX } from './harness.ts'
+import { HarnessManager } from './harness.ts'
 import type { HarnessSettings, Snapshot } from './harness.ts'
 import { SettingsStore } from './settings.ts'
+import { PORT_MIN, PORT_MAX } from '../src/shared/constants.ts'
 
 // 启动性能：禁用后台节流，避免窗口被遮挡时 dsh 子进程 / 渲染层定时器被降速
 app.commandLine.appendSwitch('disable-background-timer-throttling')
@@ -306,6 +301,7 @@ interface SettingsPayload {
   openMode?: unknown
   workspace?: unknown
   dshHome?: unknown
+  dshVersion?: unknown
 }
 
 function registerIpc(): void {
@@ -338,6 +334,10 @@ function registerIpc(): void {
     return true
   })
 
+  ipcMain.handle('harness:listVersions', () => harness.listVersions())
+
+  ipcMain.handle('harness:pruneVersions', (_e, keep: string[]) => harness.pruneVersions(keep))
+
   ipcMain.handle('harness:saveSettings', (_e, settings: SettingsPayload) => {
     const port = Number(settings?.port)
     // 范围与 index.html `#f-port` 的 min/max、渲染层 saveSettings 前校验同源，
@@ -355,6 +355,7 @@ function registerIpc(): void {
       openMode: settings?.openMode === 'browser' ? 'browser' : 'window',
       workspace: String(settings?.workspace || '').trim(),
       dshHome: String(settings?.dshHome || '').trim(),
+      dshVersion: String(settings?.dshVersion || 'latest').trim() || 'latest',
     }
     // 写盘结果回传渲染层：此前静默吞错，用户会看到「已保存」但重启后设置回退。
     const saved = store.save(patch)

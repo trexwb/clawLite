@@ -1,14 +1,3 @@
----
-AIGC:
-    Label: "1"
-    ContentProducer: 001191440300708461136T1XGW3
-    ProduceID: 75cf1e850e5668c557334a2fa39f707b_e56ea75eb87811f1b40252540024e231
-    ReservedCode1: sOpUMVje/ibCr4TxQ+fKlM5qEKnz8IclPIBUtRZ2L/VSvGash9YLNYB1449/HWDZf3SJLrVD6mJUdR0eyRiQgE9Xt1whSTiWpVGIPXwcFGHhlZ/mV3Lt5/nMbwAqBuWyHqHbdsMXeaatHnDwUcWFoF75ZdAv93nmpzvSYXu9QI0tuP84zW5+vXmaOU8=
-    ContentPropagator: 001191440300708461136T1XGW3
-    PropagateID: 75cf1e850e5668c557334a2fa39f707b_e56ea75eb87811f1b40252540024e231
-    ReservedCode2: sOpUMVje/ibCr4TxQ+fKlM5qEKnz8IclPIBUtRZ2L/VSvGash9YLNYB1449/HWDZf3SJLrVD6mJUdR0eyRiQgE9Xt1whSTiWpVGIPXwcFGHhlZ/mV3Lt5/nMbwAqBuWyHqHbdsMXeaatHnDwUcWFoF75ZdAv93nmpzvSYXu9QI0tuP84zW5+vXmaOU8=
----
-
 # AGENTS.md — Claw Lite（DeepSeek Harness 桌面宿主）
 
 ## ⚠ 强制规范（所有 Agent 必须遵守）

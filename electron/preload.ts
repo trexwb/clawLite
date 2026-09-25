@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld('clawLite', {
   restart: () => ipcRenderer.invoke('harness:restart'),
   verify: () => ipcRenderer.invoke('harness:verify'),
   clearLogs: () => ipcRenderer.invoke('harness:clearLogs'),
+  listVersions: () => ipcRenderer.invoke('harness:listVersions'),
+  pruneVersions: (keep: string[]) => ipcRenderer.invoke('harness:pruneVersions', keep),
   saveSettings: (settings: unknown) => ipcRenderer.invoke('harness:saveSettings', settings),
   open: (mode: string) => ipcRenderer.invoke('harness:open', mode),
   pickDirectory: () => ipcRenderer.invoke('dialog:pickDirectory'),

@@ -21,15 +21,18 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import type { WindowBounds } from './settings.ts'
+import { PORT_MIN, PORT_MAX, PORT_DEFAULT, LOG_LIMIT } from '../src/shared/constants.ts'
+import {
+  fetchLatestVersion,
+  fetchAllVersions,
+  ensureVersionInstalled,
+  errText,
+} from './version-fetch.ts'
 
-const LOG_LIMIT = 800
 const READY_TIMEOUT_MS = 60_000
 const STOP_GRACE_MS = 6_000
-// 端口策略单一来源：渲染层输入框 min/max、主进程 IPC 校验、此处分配三处共用，
-// 与 index.html `#f-port`、src/main.ts 的 PORT_* 保持一致（scripts/check.ts §9 校验）
-export const PORT_MIN = 1024
-export const PORT_MAX = 65535
-export const PORT_DEFAULT = 8799
+// 端口常量与日志上限来自 src/shared/constants.ts（单一来源），
+// 与 index.html `#f-port` 的 min/max、渲染层校验保持一致（scripts/check.ts §9 校验）
 
 export type HarnessState = 'notInstalled' | 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
 
@@ -39,6 +42,8 @@ export interface HarnessSettings {
   openMode: 'window' | 'browser'
   workspace: string
   dshHome: string
+  /** DSH 版本策略：'latest' 或具体版本号；空串按 latest 处理 */
+  dshVersion: string
   /** 由主进程合并 SettingsStore 全量设置时带入，随快照透传给渲染层 */
   windowBounds?: WindowBounds | null
 }
@@ -119,19 +124,22 @@ export class HarnessManager extends EventEmitter {
   userDataDir: string
 
   child: ChildProcess | null = null
+  /** 运行时解析后的实际根目录（用户版本目录优先，内置兜底）；null 时回退 dshRoot 默认推导 */
+  private _resolvedRoot: string | null = null
   state: HarnessState = 'stopped' // notInstalled | stopped | starting | running | stopping | error
   message = '已就绪 · 未启动'
   url = ''
   port = 0
   starting = false
   logs: string[] = []
-  // 默认端口与 PORT_DEFAULT 同源：原先此处另写 8799，改端口策略时极易漏改
+  // 默认端口取共享常量 PORT_DEFAULT（src/shared/constants.ts），改端口策略时只需改一处
   settings: HarnessSettings = {
     port: PORT_DEFAULT,
     autoStart: false,
     openMode: 'window',
     workspace: '',
     dshHome: '',
+    dshVersion: 'latest',
   }
   _stopping = false
 
@@ -146,6 +154,8 @@ export class HarnessManager extends EventEmitter {
   /* ── 路径解析 ────────────────────────────────────────────────── */
 
   get dshRoot(): string {
+    // 运行前由 resolveRuntime() 写入；未解析时回退到打包内置 / 开发态本地路径
+    if (this._resolvedRoot) return this._resolvedRoot
     return this.isPackaged
       ? path.join(this.resourcesPath, 'dsh')
       : path.join(this.appRoot, 'resources', 'dsh')
@@ -186,6 +196,103 @@ export class HarnessManager extends EventEmitter {
       return { ok: false, reason: '内置 DSH 运行时元数据缺失（package.json 不可读）' }
     }
     return { ok: true }
+  }
+
+  /* ── 版本解析（运行时拉取） ──────────────────────────────────── */
+
+  /**
+   * 解析本次启动要用的 DSH 根目录，优先级：
+   *   1. settings.dshVersion 指向的版本已装在 userData/dsh-versions/<ver> → 直接用
+   *   2. 指定/解析出的版本未装 + 有网 → npm install 到该目录
+   *   3. 无网或安装失败 → 回退打包内置 resources/dsh
+   * 返回 { root, version }：version 为实际解析到的 dsh 版本号（latest 已展开）。
+   */
+  async resolveRuntime(): Promise<{ root: string; version: string }> {
+    const want = (this.settings.dshVersion || 'latest').trim()
+    const useLatest = !want || want === 'latest'
+
+    // 1) 展开目标版本号
+    let target = useLatest ? '' : want
+    if (useLatest) {
+      try {
+        target = await fetchLatestVersion()
+        this.log(`[claw-lite] 最新 DSH 版本：${target}`)
+      } catch (e) {
+        this.log(`[claw-lite] ⚠ 无法查询最新版本（离线？），回退内置：${errText(e)}`)
+      }
+    } else {
+      this.log(`[claw-lite] 使用指定 DSH 版本：${target}`)
+    }
+
+    // 2) 已安装的用户版本目录
+    if (target) {
+      const verDir = path.join(this.userDataDir, 'dsh-versions', target)
+      const bin = path.join(verDir, 'app', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+      if (fs.existsSync(bin)) {
+        this._resolvedRoot = verDir
+        return { root: verDir, version: target }
+      }
+      // 3) 尝试安装
+      if (target) {
+        const plat =
+          process.platform === 'win32'
+            ? 'win-x64'
+            : process.platform === 'darwin'
+              ? `darwin-${process.arch}`
+              : `linux-${process.arch}`
+        try {
+          const r = ensureVersionInstalled(
+            target,
+            this.userDataDir,
+            process.execPath,
+            this.resourcesPath,
+            plat
+          )
+          if (r.ok) {
+            this.log(`[claw-lite] ✓ 已从 npm 拉取 DSH ${target}`)
+            this._resolvedRoot = r.dshRoot
+            return { root: r.dshRoot, version: target }
+          }
+          this.log(`[claw-lite] ⚠ DSH ${target} 拉取失败，回退内置：${r.reason}`)
+        } catch (e) {
+          this.log(`[claw-lite] ⚠ DSH ${target} 拉取异常，回退内置：${errText(e)}`)
+        }
+      }
+    }
+
+    // 4) 回退内置
+    const bundled = this.isPackaged
+      ? path.join(this.resourcesPath, 'dsh')
+      : path.join(this.appRoot, 'resources', 'dsh')
+    this._resolvedRoot = bundled
+    return { root: bundled, version: this.dshVersion || '(内置)' }
+  }
+
+  /** 列出 npm 上所有可用版本（供设置页下拉）；失败返回空数组 */
+  async listVersions(): Promise<string[]> {
+    try {
+      return await fetchAllVersions()
+    } catch (e) {
+      this.log(`[claw-lite] ⚠ 版本列表获取失败：${errText(e)}`)
+      return []
+    }
+  }
+
+  /** 清理 userData/dsh-versions 下除 keep 之外的旧版本目录，释放磁盘 */
+  pruneVersions(keep: string[]): { ok: boolean; removed: string[]; error?: string } {
+    const base = path.join(this.userDataDir, 'dsh-versions')
+    if (!fs.existsSync(base)) return { ok: true, removed: [] }
+    const removed: string[] = []
+    for (const d of fs.readdirSync(base)) {
+      if (keep.includes(d)) continue
+      try {
+        fs.rmSync(path.join(base, d), { recursive: true, force: true })
+        removed.push(d)
+      } catch (e) {
+        return { ok: false, removed, error: errText(e) }
+      }
+    }
+    return { ok: true, removed }
   }
 
   /* ── 状态与日志 ──────────────────────────────────────────────── */
@@ -257,10 +364,24 @@ export class HarnessManager extends EventEmitter {
     // 否则两段流程会互相覆盖 child 句柄，新起的进程会被 stop() 的超时分支误杀
     if (this._stopping) return this.snapshot()
 
-    const rt = this.checkRuntime()
-    if (!rt.ok) {
-      this.setState('notInstalled', rt.reason)
-      this.log(`[claw-lite] ✗ ${rt.reason}`)
+    // 解析运行时（latest→版本号→用户目录安装或内置兜底）。
+    // 必须在 checkRuntime / spawn 之前完成，使 dshEntry / dshVersion 指向实际根目录。
+    let root: string
+    try {
+      const r = await this.resolveRuntime()
+      root = r.root
+    } catch (e) {
+      const msg = `运行时解析失败：${e instanceof Error ? e.message : String(e)}`
+      this.setState('error', msg)
+      this.log(`[claw-lite] ✗ ${msg}`)
+      return this.snapshot()
+    }
+
+    const entry = path.join(root, 'app', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+    if (!fs.existsSync(entry)) {
+      const msg = `未找到 DSH 运行时：${entry}`
+      this.setState('notInstalled', msg)
+      this.log(`[claw-lite] ✗ ${msg}`)
       return this.snapshot()
     }
 

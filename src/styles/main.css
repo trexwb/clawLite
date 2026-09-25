@@ -524,7 +524,9 @@ select {
 
 .log {
   margin: 0;
-  height: 260px;
+  /* 随视口伸缩：小窗口不低于原 260px 下限，大窗口最高 480px
+     （clamp 上限防止超宽屏下日志区挤占其余卡片视野） */
+  height: clamp(260px, 38vh, 480px);
   overflow-y: auto;
   padding: 13px 15px;
   border: 1px solid var(--line-soft);
@@ -578,6 +580,16 @@ select {
   z-index: 999;
   max-width: 76vw;
   text-align: center;
+  /* 每次从 display:none 恢复显示时播放淡入（display 切换会重启动画），
+     免去肉眼可辨的硬切；淡出仍为直接隐藏，提示类消息无需过渡 */
+  animation: toast-in 0.2s ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
 }
 
 .toast.err {
@@ -645,6 +657,10 @@ select {
   .dot.stopping,
   .pill.starting .pill-dot,
   .pill.stopping .pill-dot {
+    animation: none;
+  }
+
+  .toast {
     animation: none;
   }
 }

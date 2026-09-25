@@ -11,6 +11,8 @@
    类型声明见 src/env.d.ts（全局合并 Window.clawLite）。
    ═══════════════════════════════════════════════════════════════════ */
 
+import { PORT_MIN, PORT_MAX, PORT_DEFAULT, LOG_LIMIT } from './shared/constants.ts'
+
 const api: ClawLiteApi | null = (typeof window !== 'undefined' && window.clawLite) || null
 const IS_DESKTOP = !!api
 
@@ -56,6 +58,8 @@ const el = {
   fOpenMode: byId<HTMLSelectElement>('f-open-mode'),
   fWorkspace: byId<HTMLInputElement>('f-workspace'),
   fDshHome: byId<HTMLInputElement>('f-dsh-home'),
+  fDshVersion: byId<HTMLInputElement>('f-dsh-version'),
+  btnRefreshVersions: byId<HTMLButtonElement>('btn-refresh-versions'),
   fAuto: byId<HTMLInputElement>('f-auto'),
   fAutoscroll: byId<HTMLInputElement>('f-autoscroll'),
   saveHint: byId('save-hint'),
@@ -64,11 +68,8 @@ const el = {
   footVersion: byId('foot-version'),
 }
 
-// 端口策略：与 electron/harness.ts 的 PORT_MIN / PORT_MAX / PORT_DEFAULT、
-// index.html `#f-port` 的 min/max 同源（scripts/check.ts §9 校验三方一致）
-const PORT_MIN = 1024
-const PORT_MAX = 65535
-const PORT_DEFAULT = 8799
+// 端口策略：PORT_MIN/MAX/DEFAULT 来自 src/shared/constants.ts（单一来源），
+// 与 index.html `#f-port` 的 min/max 同源（scripts/check.ts §9 校验三方一致）
 const PORT_HINT = `监听端口需为 ${PORT_MIN}-${PORT_MAX} 的整数`
 
 /** 读取并校验端口输入：非整数或越界返回 null，由调用方显式回显错误 */
@@ -179,6 +180,9 @@ function render(snap: ClawLiteSnapshot | null | undefined): void {
   if (document.activeElement !== el.fPort) el.fPort.value = String(s.port ?? PORT_DEFAULT)
   if (document.activeElement !== el.fWorkspace) el.fWorkspace.value = s.workspace || ''
   if (document.activeElement !== el.fDshHome) el.fDshHome.value = s.dshHome || ''
+  if (document.activeElement !== el.fDshVersion) {
+    el.fDshVersion.value = s.dshVersion || 'latest'
+  }
   // 与其它字段一致：聚焦时不回填，避免用户正按方向键选择打开方式时被覆盖
   if (document.activeElement !== el.fOpenMode) el.fOpenMode.value = s.openMode || 'window'
   el.fAuto.checked = !!s.autoStart
@@ -187,8 +191,7 @@ function render(snap: ClawLiteSnapshot | null | undefined): void {
 }
 
 // DOM 行数上限：长会话下日志节点只增不减会持续占用内存并拖慢渲染，
-// 与主进程 LOG_LIMIT(800) 对齐，超出后从头部裁剪。
-const LOG_DOM_LIMIT = 800
+// 与主进程 LOG_LIMIT（src/shared/constants.ts 同源）对齐，超出后从头部裁剪。
 
 // 日志写入合并到下一帧批量执行：dsh 启动期日志密集，逐行 appendChild +
 // 同步读 scrollHeight 会触发大量强制重排；合并后一帧只重排一次。
@@ -211,7 +214,7 @@ function flushLog(): void {
     logEmpty = false
   }
   el.log.appendChild(frag)
-  while (el.log.childNodes.length > LOG_DOM_LIMIT) el.log.removeChild(el.log.firstChild!)
+  while (el.log.childNodes.length > LOG_LIMIT) el.log.removeChild(el.log.firstChild!)
   if (el.fAutoscroll.checked) el.log.scrollTop = el.log.scrollHeight
 }
 
@@ -221,7 +224,7 @@ function logLine(text: string, kind: string | null): void {
 }
 
 // 英文关键词要求「独立词 + 前置分隔符」：原实现 /error/i 会把
-// `/path/error-handler.js`、`token=errorless` 这类内容误染成错误色。
+// `/path/error-handler.js`、URL 查询参数（含 token 取值）这类内容误染成错误色。
 // 中文不参与 \b 判定（CJK 非 \w），单独匹配。
 const ERR_WORD_RE = /(?:^|[\s(\["'「:：])(?:error|fatal)\b/i
 const ERR_CJK_RE = /错误|失败/
@@ -247,6 +250,73 @@ function rebuildLog(lines: string[] | null | undefined): void {
     return
   }
   for (const l of lines) logLine(l, classify(l))
+}
+
+/* ── 设置保存 ──────────────────────────────────────────────────── */
+
+/** 卡片底部临时提示的展示时长（「已保存」/「端口无效」等） */
+const SAVE_HINT_MS = 2400
+
+let saveHintTimer: NodeJS.Timeout | null = null
+
+/** 表单当前值与最近一次快照设置比对：有差异即视为未保存修改 */
+function settingsChanged(): boolean {
+  const s = snapshot?.settings
+  if (!s) return false
+  if (el.fPort.value.trim() !== String(s.port ?? PORT_DEFAULT)) return true
+  if (el.fWorkspace.value.trim() !== (s.workspace || '')) return true
+  if (el.fDshHome.value.trim() !== (s.dshHome || '')) return true
+  if (el.fDshVersion.value.trim() !== (s.dshVersion || 'latest')) return true
+  if (el.fOpenMode.value !== (s.openMode || 'window')) return true
+  return el.fAuto.checked !== !!s.autoStart
+}
+
+/** 依据未保存状态刷新常驻提示；临时提示（计时中）不被覆盖 */
+function updateSaveHint(): void {
+  if (saveHintTimer) return
+  el.saveHint.textContent = settingsChanged() ? '有未保存修改' : ''
+}
+
+/** 临时提示：展示 SAVE_HINT_MS 后回落到未保存状态判断 */
+function flashSaveHint(msg: string): void {
+  if (saveHintTimer) clearTimeout(saveHintTimer)
+  el.saveHint.textContent = msg
+  saveHintTimer = setTimeout(() => {
+    saveHintTimer = null
+    updateSaveHint()
+  }, SAVE_HINT_MS)
+}
+
+/** 保存设置：由保存按钮与表单内回车共用 */
+async function submitSettings(): Promise<void> {
+  // 端口先在前端按同一范围校验：原实现 `Number(...) || 8799` 会把
+  // 空值/非法值静默改写成 8799 保存，用户看到的输入与落盘值不一致
+  const port = readPort()
+  if (port === null) {
+    flashSaveHint('端口无效')
+    toast(PORT_HINT, true)
+    return
+  }
+  const settings = {
+    port,
+    autoStart: el.fAuto.checked,
+    openMode: el.fOpenMode.value,
+    dshHome: el.fDshHome.value.trim(),
+    workspace: el.fWorkspace.value.trim(),
+    dshVersion: el.fDshVersion.value.trim() || 'latest',
+  }
+  const res = await call('harness_save_settings', { settings })
+  render(res?.snap || res)
+  if (res && res.ok === false) {
+    flashSaveHint('保存失败')
+    toast(res.error || '设置保存失败', true)
+    return
+  }
+  flashSaveHint('已保存')
+  // 端口/工作目录等只在下一次 spawn 时读取：服务在运行中保存设置，
+  // 旧配置仍在生效，必须显式说明，避免误以为已即刻切换
+  const restartNeeded = !!(res?.snap?.running || res?.snap?.starting)
+  toast(restartNeeded ? '设置已保存，将在下次启动 DSH 时生效' : '设置已保存')
 }
 
 /* ── 交互 ──────────────────────────────────────────────────────── */
@@ -297,45 +367,47 @@ function bind(): void {
     }
   })
 
+  el.btnSave.addEventListener('click', () => guard(submitSettings))
+
+  // 表单内文本输入回车即保存（与保存按钮同一路径，含端口校验与提示）
+  for (const input of [el.fPort, el.fWorkspace, el.fDshHome, el.fDshVersion]) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !el.btnSave.disabled) void guard(submitSettings)
+    })
+    // 输入即刷新「有未保存修改」常驻提示
+    input.addEventListener('input', updateSaveHint)
+  }
+  el.fOpenMode.addEventListener('change', updateSaveHint)
+  el.fAuto.addEventListener('change', updateSaveHint)
   el.btnPickWs.addEventListener('click', () =>
     guard(async () => {
       const picked = await bridge().pickDirectory()
-      if (typeof picked === 'string' && picked) el.fWorkspace.value = picked
+      if (typeof picked === 'string' && picked) {
+        el.fWorkspace.value = picked
+        updateSaveHint()
+      }
     })
   )
 
-  el.btnSave.addEventListener('click', () =>
+  // 刷新 npm 上的 DSH 版本列表，填入 datalist 供用户选择
+  el.btnRefreshVersions.addEventListener('click', () =>
     guard(async () => {
-      // 端口先在前端按同一范围校验：原实现 `Number(...) || 8799` 会把
-      // 空值/非法值静默改写成 8799 保存，用户看到的输入与落盘值不一致
-      const port = readPort()
-      if (port === null) {
-        el.saveHint.textContent = '端口无效'
-        setTimeout(() => (el.saveHint.textContent = ''), 2400)
-        toast(PORT_HINT, true)
-        return
+      el.btnRefreshVersions.disabled = true
+      try {
+        const versions = (await bridge().listVersions()) as string[]
+        const list = document.getElementById('dsh-version-list')
+        if (list && versions.length) {
+          list.textContent = ''
+          for (const v of versions) {
+            const opt = document.createElement('option')
+            opt.value = v
+            list.appendChild(opt)
+          }
+        }
+        toast(versions.length ? `已刷新版本列表（${versions.length} 个）` : '无可用版本')
+      } finally {
+        el.btnRefreshVersions.disabled = false
       }
-      const settings = {
-        port,
-        autoStart: el.fAuto.checked,
-        openMode: el.fOpenMode.value,
-        dshHome: el.fDshHome.value.trim(),
-        workspace: el.fWorkspace.value.trim(),
-      }
-      const res = await call('harness_save_settings', { settings })
-      render(res?.snap || res)
-      if (res && res.ok === false) {
-        el.saveHint.textContent = '保存失败'
-        setTimeout(() => (el.saveHint.textContent = ''), 2400)
-        toast(res.error || '设置保存失败', true)
-        return
-      }
-      el.saveHint.textContent = '已保存'
-      setTimeout(() => (el.saveHint.textContent = ''), 2400)
-      // 端口/工作目录等只在下一次 spawn 时读取：服务在运行中保存设置，
-      // 旧配置仍在生效，必须显式说明，避免误以为已即刻切换
-      const restartNeeded = !!(res?.snap?.running || res?.snap?.starting)
-      toast(restartNeeded ? '设置已保存，将在下次启动 DSH 时生效' : '设置已保存')
     })
   )
 
@@ -396,6 +468,7 @@ async function boot(): Promise<void> {
         autoStart: false,
         openMode: 'window',
         dshHome: '',
+        dshVersion: 'latest',
         workspace: '',
       },
     })

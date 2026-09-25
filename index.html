@@ -102,7 +102,7 @@
             <div class="form">
               <label class="field">
                 <span class="field-label">监听端口</span>
-                <input id="f-port" type="number" min="1024" max="65535" step="1" />
+                <input id="f-port" type="number" inputmode="numeric" min="1024" max="65535" step="1" />
               </label>
 
               <label class="field">
@@ -130,6 +130,22 @@
                   spellcheck="false"
                   autocomplete="off"
                 />
+              </label>
+
+              <label class="field">
+                <span class="field-label">DSH 版本</span>
+                <span class="row">
+                  <input
+                    id="f-dsh-version"
+                    type="text"
+                    placeholder="latest 或具体版本号，如 0.1.7-rc.2"
+                    spellcheck="false"
+                    autocomplete="off"
+                    list="dsh-version-list"
+                  />
+                  <datalist id="dsh-version-list"></datalist>
+                  <button id="btn-refresh-versions" type="button" class="btn btn-sm">刷新列表</button>
+                </span>
               </label>
 
               <label class="check">

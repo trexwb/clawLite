@@ -19,6 +19,7 @@ interface ClawLiteSettings {
   openMode: string
   workspace: string
   dshHome: string
+  dshVersion: string
   windowBounds?: ClawLiteWindowBounds | null
 }
 
@@ -27,7 +28,10 @@ interface ClawLiteSnapshot {
   running: boolean
   starting: boolean
   canStop: boolean
-  state: string
+  // 与主进程 electron/harness.ts 的 HarnessState 联合类型严格对齐：
+  // scripts/check.ts §7 双向校验 harness.setState 取值 ⊆ 此处标签键，
+  // 且渲染层 STATE_LABEL 键 ⊆ harness.setState 取值（无死枚举）。
+  state: 'notInstalled' | 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
   message: string
   url: string
   dshVersion: string
@@ -55,6 +59,8 @@ interface ClawLiteApi {
   restart(): Promise<ClawLiteSnapshot>
   verify(): Promise<string>
   clearLogs(): Promise<boolean>
+  listVersions(): Promise<string[]>
+  pruneVersions(keep: string[]): Promise<{ ok: boolean; removed: string[]; error?: string }>
   saveSettings(settings: Record<string, unknown>): Promise<unknown>
   open(mode: string): Promise<boolean>
   pickDirectory(): Promise<string | null>
