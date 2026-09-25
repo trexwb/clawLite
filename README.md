@@ -79,8 +79,19 @@ npm run dist:linux     # Linux：AppImage
 npm run dist           # 当前平台
 ```
 
-产物输出到 `release/`。macOS 本地打包默认不签名（`CSC_IDENTITY_AUTO_DISCOVERY=false`），
-正式分发需在具备证书的机器上签名 / 公证。
+产物输出到 `release/`。
+
+**代码签名状态：当前为未签名版本**。CI 与本地打包一致，均显式设置 `CSC_IDENTITY_AUTO_DISCOVERY=false`
+关闭证书自动发现，未配置任何签名凭据，因此不签名也能正常出包（macOS 首次打开需右键「打开」绕过 Gatekeeper）。
+
+`.github/workflows/release.yml` 已按「注释占位」预留 macOS 代码签名与公证所需的全部配置
+（`CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`），
+待 secrets 到位后按该文件内注释的四步操作即可启用，无需改动 `electron-builder.yml`：
+
+1. 仓库 `Settings → Secrets and variables → Actions` 添加上述 5 个 secrets；
+2. 删除 `release.yml` 中 `CSC_IDENTITY_AUTO_DISCOVERY: "false"` 那一行（必须删除，否则证书自动发现被关闭，产物仍是未签名）；
+3. 取消该段中各项 secrets 的注释；
+4. 推送 `v*` tag 验证：日志出现 `notarization successful`，产物可正常通过 Gatekeeper。
 
 ## CI 流水线
 
@@ -146,6 +157,6 @@ clawLite/
 
 ## 已知限制
 
-- macOS 包未签名 / 未公证，首次打开需右键「打开」绕过 Gatekeeper
+- macOS 包未签名 / 未公证（CI 与本地产物一致），首次打开需右键「打开」绕过 Gatekeeper；启用签名 / 公证的步骤见上文「打包」一节
 - 依赖树约 300MB，安装包体积较大（压缩后 dmg 约 150MB）
 - 内置 DSH 版本由 `scripts/fetch-runtime.ts` 的 `DSH_VERSION`（当前 `0.1.5-rc.3`）决定，升级需重新执行 `npm run runtime:force`。**当前 Electron 版本与 DSH v0.1.7 存在兼容冲突，建议维持 `0.1.5-rc.3`**；待后续 Electron 升级支持 v0.1.7-rc.2 后再切换
