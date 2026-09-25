@@ -321,6 +321,23 @@ ok(
   (pillTag ? pillTag[0] : '').trim()
 )
 ok('日志区不做 live 播报（高频追加不打断读屏）', /id="log"[^>]*aria-live="off"/.test(htmlSrc))
+// §11.3 禁用 !important，唯一例外是 @media (prefers-reduced-motion) 内的覆盖。
+// 算法：先剥除 CSS 注释（避免注释中提及该术语导致误报），再挖掉
+// prefers-reduced-motion 块，最后在剩余文本里搜 !important。
+const cssNoComments = cssSrc.replace(/\/\*[\s\S]*?\*\//g, '')
+const cssWithoutReducedMotion = cssNoComments.replace(
+  /@media\s*\(prefers-reduced-motion[^)]*\)\s*\{[\s\S]*?\n\}/g,
+  ''
+)
+const importantLines = cssWithoutReducedMotion
+  .split('\n')
+  .map((l, i) => (l.includes('!important') ? i + 1 : -1))
+  .filter((n) => n >= 0)
+ok(
+  'CSS 无 !important（prefers-reduced-motion 块内例外）',
+  !importantLines.length,
+  importantLines.length ? `第 ${importantLines.join(', ')} 行` : 'clean'
+)
 
 /* ── 11) 构建产物模块形态 ─────────────────────────────────────── */
 // 迁移路线的核心不变量：主进程产物必须是 ESM（纯 ESM 主进程），
