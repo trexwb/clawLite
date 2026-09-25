@@ -6,26 +6,32 @@
   "description": "Claw Lite — DeepSeek Harness 桌面宿主（Electron，内置 DSH 运行时，用户免装 Node）",
   "author": "trexwb",
   "license": "MIT",
-  "main": "electron/main.cjs",
+  "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
+    "build:electron": "node scripts/build-electron.ts",
     "build:web": "vite build",
-    "start": "npm run build:web && electron .",
+    "build": "npm run build:electron && npm run build:web",
+    "start": "npm run build && electron .",
     "electron": "electron .",
-    "runtime": "node scripts/fetch-runtime.mjs",
-    "runtime:force": "node scripts/fetch-runtime.mjs --force",
-    "check": "node scripts/check.mjs",
-    "dist": "npm run build:web && electron-builder",
-    "dist:mac": "npm run build:web && electron-builder --mac",
-    "dist:win": "npm run build:web && electron-builder --win",
-    "dist:linux": "npm run build:web && electron-builder --linux"
+    "runtime": "node scripts/fetch-runtime.ts",
+    "runtime:force": "node scripts/fetch-runtime.ts --force",
+    "check": "node scripts/check.ts",
+    "verify:dist": "node scripts/verify-dist.ts",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
+    "@types/node": "^26.6.2",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
     "vite": "^6.0.0"
   }
 }

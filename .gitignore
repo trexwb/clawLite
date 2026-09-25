@@ -1,6 +1,7 @@
 # Git
 node_modules/
 dist/
+dist-electron/
 release/
 .DS_Store
 *.log

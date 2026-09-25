@@ -28,11 +28,17 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          # 源码为 .ts，靠 node 原生类型擦除直跑（scripts/*.ts），需 node ≥ 24
+          node-version: "24"
           cache: npm
 
       - name: 安装依赖
         run: npm ci
+
+      # 先出主进程产物：静态自检 §11 要断言产物模块形态（main ESM / preload CJS），
+      # 打包也直接吃 dist-electron/*
+      - name: 构建主进程产物
+        run: npm run build:electron
 
       # 把内置 DSH 依赖树拉到 resources/dsh（各平台必须在自己的构建机上安装，
       # 依赖树含 node-pty / sharp 等平台相关原生模块）
@@ -44,6 +50,10 @@ jobs:
 
       - name: 构建渲染进程
         run: npm run build:web
+
+      # 静态自检看不到 Vite 产物：构建后单独断言相对路径与品牌图标真实产出
+      - name: 校验渲染层产物
+        run: npm run verify:dist
 
       - name: 打包安装程序
         run: npx electron-builder ${{ matrix.args }} --publish never
