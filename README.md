@@ -148,5 +148,5 @@ clawLite/
 
 - macOS 包未签名 / 未公证，首次打开需右键「打开」绕过 Gatekeeper
 - 依赖树约 300MB，安装包体积较大（压缩后 dmg 约 150MB）
-- 内置 DSH 版本由 `scripts/fetch-runtime.ts` 的 `DSH_VERSION` 决定，升级需重新执行 `npm run runtime:force`
+- 内置 DSH 版本由 `scripts/fetch-runtime.ts` 的 `DSH_VERSION`（当前 `0.1.5-rc.3`）决定，升级需重新执行 `npm run runtime:force`。**当前 Electron 版本与 DSH v0.1.7 存在兼容冲突，建议维持 `0.1.5-rc.3`**；待后续 Electron 升级支持 v0.1.7-rc.2 后再切换
 *（内容由AI生成，仅供参考）*

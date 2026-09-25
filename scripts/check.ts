@@ -15,6 +15,7 @@
      9. 端口范围三方一致（index.html ↔ harness.ts ↔ 渲染层）
     10. 安全与无障碍基线硬断言（webPreferences / CSP / 播报区唯一）
     11. 构建产物模块形态（dist-electron/main.js 必须 ESM、preload.js 必须 CJS）
+    12. 下载阶段枚举双向可达（DOWNLOAD_PHASES ↔ 渲染层 PHASE_LABEL）
 
    源码为 .ts（node 原生类型擦除直跑），产物为 .js；本脚本自身即 .ts。
    ═══════════════════════════════════════════════════════════════════ */
@@ -343,6 +344,32 @@ if (existsSync(distMain) && existsSync(distPreload)) {
 } else {
   warn('构建产物模块形态检查已跳过', '先执行 npm run build:electron 生成 dist-electron/')
 }
+
+/* ── 12) 下载阶段枚举双向可达 ─────────────────────────────────── */
+// 与 §7 同一思路：进度面板按 phase 选文案，若主进程新增阶段而渲染层漏配，
+// 界面会退化成显示英文原值（如 "verifying"）；反之渲染层多写的键则是死代码。
+// 两侧都断言，避免新增阶段时静默漏改。
+const downloadSrc = readFileSync(join(root, 'electron/version-download.ts'), 'utf8')
+const phasesBlock = downloadSrc.match(/DOWNLOAD_PHASES\s*=\s*\[([\s\S]*?)\]/)
+const phases = [
+  ...new Set([...(phasesBlock ? phasesBlock[1] : '').matchAll(/'([a-z]+)'/g)].map((m) => m[1])),
+]
+const phaseLabelBlock = rendererSrc.match(/const PHASE_LABEL\s*[^=]*=\s*\{([\s\S]*?)\n\}/)
+const phaseLabelKeys = [
+  ...new Set([...(phaseLabelBlock ? phaseLabelBlock[1] : '').matchAll(/(\w+)\s*:/g)].map((m) => m[1])),
+]
+const missingPhaseLabels = phases.filter((p) => !phaseLabelKeys.includes(p))
+ok(
+  '下载阶段正向对齐（DOWNLOAD_PHASES ⊆ 渲染层 PHASE_LABEL）',
+  phases.length > 0 && !missingPhaseLabels.length,
+  missingPhaseLabels.join(',') || `${phases.length} 个阶段`
+)
+const deadPhaseLabels = phaseLabelKeys.filter((p) => !phases.includes(p))
+ok(
+  '下载阶段无死枚举（渲染层 PHASE_LABEL ⊆ DOWNLOAD_PHASES）',
+  phaseLabelKeys.length > 0 && !deadPhaseLabels.length,
+  deadPhaseLabels.join(',') || '全部可达'
+)
 
 console.log(
   fails === 0 ? `\n全部通过 ✔${warns ? `（${warns} 项告警）` : ''}` : `\n${fails} 项失败 ✘`

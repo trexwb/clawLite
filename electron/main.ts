@@ -11,6 +11,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { HarnessManager } from './harness.ts'
 import type { HarnessSettings, Snapshot } from './harness.ts'
+import type { VersionJob } from './version-download.ts'
 import { SettingsStore } from './settings.ts'
 import { PORT_MIN, PORT_MAX } from '../src/shared/constants.ts'
 
@@ -159,6 +160,18 @@ function createMainWindow(): BrowserWindow {
   return win
 }
 
+/**
+ * 热切换后把已打开的 DSH Web UI 窗口重定向到新实例。
+ * 旧实例随 stop() 一起退出，其页面必然失效；若此处不主动重载，
+ * 用户会看到一个死页面并误判为"切换失败"。
+ * 仅在窗口已打开时动作——用户没开窗口时不该替他弹一个出来。
+ */
+function syncWebWindow(): void {
+  if (webWindow && !webWindow.isDestroyed() && harness.url) {
+    webWindow.loadURL(harness.url)
+  }
+}
+
 /** 打开 DSH Web UI（应用内窗口） */
 function openWebWindow(): void {
   if (!harness.url) return
@@ -239,6 +252,11 @@ function wireHarness(): void {
     broadcast('harness:state', snap)
   })
   harness.on('log', (line: string) => broadcast('harness:log', line))
+  // 下载进度走独立通道：进度帧频率远高于状态帧（节流后约 8/s），
+  // 混进 harness:state 会连带 logs 快照一起重传，得不偿失。
+  harness.on('progress', (job: VersionJob) => {
+    broadcast('harness:versionProgress', job)
+  })
 }
 
 /* ── 自动更新 ───────────────────────────────────────────────────── */
@@ -338,6 +356,29 @@ function registerIpc(): void {
 
   ipcMain.handle('harness:pruneVersions', (_e, keep: string[]) => harness.pruneVersions(keep))
 
+  // 选定版本 → 立即开始下载（不等保存、不等下次打开），进度经 harness:versionProgress 推送
+  ipcMain.handle('harness:prepareVersion', (_e, policy: string) => harness.prepareVersion(String(policy || '')))
+
+  // 下载完成后 → 立即热切换并启动（不重启应用）
+  ipcMain.handle('harness:applyVersion', async (_e, policy: string, start?: boolean) => {
+    const snap = await harness.applyVersion(String(policy || ''), start !== false)
+    // 落定选择：harness.applyVersion 只改内存 settings，若这里不写盘，
+    // 用户切到某版本后重启应用会悄悄退回旧版本（版本树还在，白下）
+    if (harness.settings.dshVersion) {
+      store.save({ dshVersion: harness.settings.dshVersion })
+    }
+    if (snap.running && snap.url) {
+      // 旧实例已随切换退出，已打开的 DSH 窗口页面必然失效，必须重定向到新端口。
+      // 与「启动」一致的呈现策略：window 模式确保有窗口可看；
+      // browser 模式不主动开窗，但已开着的那个也要跟着刷新。
+      if (snap.settings.openMode === 'window') setTimeout(() => openWebWindow(), 300)
+      else syncWebWindow()
+    }
+    return snap
+  })
+
+  ipcMain.handle('harness:cancelVersion', () => harness.cancelVersion())
+
   ipcMain.handle('harness:saveSettings', (_e, settings: SettingsPayload) => {
     const port = Number(settings?.port)
     // 范围与 index.html `#f-port` 的 min/max、渲染层 saveSettings 前校验同源，
@@ -358,10 +399,17 @@ function registerIpc(): void {
       dshVersion: String(settings?.dshVersion || 'latest').trim() || 'latest',
     }
     // 写盘结果回传渲染层：此前静默吞错，用户会看到「已保存」但重启后设置回退。
+    const prevVersion = harness.settings.dshVersion
     const saved = store.save(patch)
     harness.settings = { ...harness.settings, ...patch }
     const snap = harness.snapshot()
     broadcast('harness:state', snap)
+    // 版本策略在保存时发生变化 → 立即开下载。与设置页「选定即下载」同源，
+    // 兜住任何绕过渲染层预下载的路径（菜单、脚本、旧版渲染层）。
+    // 下载本身异步且自带上报，不阻塞保存结果的返回。
+    if (patch.dshVersion && patch.dshVersion !== prevVersion) {
+      safeHarness(() => harness.prepareVersion(patch.dshVersion as string))
+    }
     return { ok: saved.ok !== false, error: saved.error || '', snap }
   })
 

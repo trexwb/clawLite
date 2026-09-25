@@ -59,7 +59,18 @@ const el = {
   fWorkspace: byId<HTMLInputElement>('f-workspace'),
   fDshHome: byId<HTMLInputElement>('f-dsh-home'),
   fDshVersion: byId<HTMLInputElement>('f-dsh-version'),
+  btnToggleVersionList: byId<HTMLButtonElement>('btn-toggle-version-list'),
   btnRefreshVersions: byId<HTMLButtonElement>('btn-refresh-versions'),
+  versionDropdown: byId('version-dropdown'),
+  versionDropdownList: byId('version-dropdown-list'),
+  versionDownload: byId('version-download'),
+  dlTitle: byId('dl-title'),
+  dlPct: byId('dl-pct'),
+  dlBar: byId('dl-bar'),
+  dlFill: byId('dl-fill'),
+  dlMsg: byId('dl-msg'),
+  btnApplyVersion: byId<HTMLButtonElement>('btn-apply-version'),
+  btnCancelDownload: byId<HTMLButtonElement>('btn-cancel-download'),
   fAuto: byId<HTMLInputElement>('f-auto'),
   fAutoscroll: byId<HTMLInputElement>('f-autoscroll'),
   saveHint: byId('save-hint'),
@@ -72,6 +83,22 @@ const el = {
 // 与 index.html `#f-port` 的 min/max 同源（scripts/check.ts §9 校验三方一致）
 const PORT_HINT = `监听端口需为 ${PORT_MIN}-${PORT_MAX} 的整数`
 
+// DSH 版本字段的默认说明文案：与 index.html #dsh-version-hint 的静态内容同源，
+// 即时校验回落时用它恢复，避免两处文案漂移
+const DEFAULT_VERSION_HINT =
+  '当前运行的版本；选定版本后立即从 npm 下载，下载完成即可直接切换启动，无需重启应用'
+
+/** 与当前 Electron 不兼容的 DSH 版本前缀：这些版本的原生模块 ABI 不匹配，
+ *  下载后无法启动，需等后续修复后再开放使用 */
+const INCOMPATIBLE_PREFIXES = ['0.1.7']
+const INCOMPATIBLE_MSG =
+  '该版本与当前 Electron 存在兼容性问题（原生模块 ABI 不匹配），请等待后续修复后再使用'
+
+/** 检查版本号是否在已知不兼容列表中 */
+function isIncompatible(version: string): boolean {
+  return INCOMPATIBLE_PREFIXES.some((p) => version.startsWith(p))
+}
+
 /** 读取并校验端口输入：非整数或越界返回 null，由调用方显式回显错误 */
 function readPort(): number | null {
   const raw = String(el.fPort.value ?? '').trim()
@@ -82,6 +109,12 @@ function readPort(): number | null {
 
 let snapshot: ClawLiteSnapshot | null = null
 let logEmpty = true
+
+// 版本字段的显示基线与落盘基线：设置偏好为 latest 时，字段显示当前实际
+// 运行版本（snap.dshVersion），但未改动的值保存时仍按 latest 语义落盘，
+// 不因显示而意外钉死版本；用户改成了别的值则按输入值落盘
+let versionDisplay = 'latest'
+let versionStored = 'latest'
 
 /* ── 通用工具 ──────────────────────────────────────────────────── */
 
@@ -135,9 +168,99 @@ const STATE_LABEL: Record<string, string> = {
   error: '启动失败',
 }
 
+// 下载阶段文案：键必须与 electron/version-download.ts 的 DOWNLOAD_PHASES
+// 完全一致（scripts/check.ts §12 做双向校验，杜绝两处漂移）
+const PHASE_LABEL: Record<string, string> = {
+  idle: '待下载',
+  resolving: '正在解析版本…',
+  downloading: '正在下载运行时…',
+  installing: '正在安装依赖…',
+  verifying: '正在校验运行时…',
+  done: '下载完成',
+  error: '下载失败',
+}
+
+/**
+ * 版本下载进度面板。数据源为 Snapshot.versionJob：
+ * - 主进程在每次进度变化时广播 harness:versionProgress（轻量帧），
+ *   随后的 harness:state 快照也会带上 versionJob，故界面重载后可自动恢复进度；
+ * - phase=idle 表示无进行中的任务（含已取消、已切换完成），面板收起。
+ */
+function renderVersionJob(job: ClawLiteVersionJob | null | undefined): void {
+  if (!job || job.phase === 'idle') {
+    el.versionDownload.classList.add('hidden')
+    return
+  }
+  const done = job.phase === 'done'
+  const failed = job.phase === 'error'
+  const known = job.total > 0
+  const percent = Math.max(0, Math.min(100, job.percent || 0))
+
+  el.versionDownload.classList.remove('hidden')
+  el.versionDownload.classList.toggle('done', done)
+  el.versionDownload.classList.toggle('error', failed)
+  el.dlTitle.textContent = `${PHASE_LABEL[job.phase] || job.phase}${job.version ? ` · ${job.version}` : ''}`
+  el.dlPct.textContent = known || done ? `${Math.round(percent)}%` : '—'
+  // 依赖总数未拿到前不显示假百分比，改为来回扫动的不确定进度
+  el.dlBar.classList.toggle('indeterminate', !known && !done && !failed)
+  el.dlFill.style.width = known || done ? `${percent}%` : ''
+  el.dlMsg.textContent =
+    job.message || (known ? `已获取 ${job.fetched} / ${job.total} 个依赖包` : '正在获取依赖清单…')
+
+  // 完成且入口已落地才允许切换；失败态把按钮复用为「重试并启动」
+  // （重试会先补齐下载再启动，与正常路径同一条链路）
+  el.btnApplyVersion.disabled = failed ? false : !(done && job.installed)
+  el.btnApplyVersion.textContent = failed ? '重试并启动' : '切换并启动'
+  el.btnCancelDownload.textContent = done || failed ? '关闭' : '取消下载'
+}
+
+/** 面板按钮取值的唯一来源：以任务自身版本为准，避免用户改了输入框后按钮名不副实 */
+let activeVersionJob: ClawLiteVersionJob | null = null
+
+/** 自动切换进行中标记：防止 progress 帧重复触发 applyVersion（done 帧可能连发） */
+let autoSwitching = false
+
+/** 版本列表缓存（供下拉面板渲染用） */
+let cachedVersionList: string[] = []
+
+/** 下拉面板是否展开 */
+let versionDropdownOpen = false
+
+/** 切换下拉面板可见性 */
+function toggleVersionDropdown(forceClose = false): void {
+  if (forceClose || versionDropdownOpen) {
+    versionDropdownOpen = false
+    el.versionDropdown.classList.add('hidden')
+    el.btnToggleVersionList.textContent = '▼'
+    return
+  }
+  // 无列表数据时先不展开
+  if (!cachedVersionList.length) return
+  versionDropdownOpen = true
+  el.versionDropdown.classList.remove('hidden')
+  el.btnToggleVersionList.textContent = '▲'
+  renderVersionDropdown()
+}
+
+/** 渲染下拉面板选项：始终显示全量列表，不兼容版本置灰 + 删除线 */
+function renderVersionDropdown(): void {
+  const ul = el.versionDropdownList
+  ul.textContent = ''
+  for (const v of cachedVersionList) {
+    const li = document.createElement('li')
+    li.textContent = v
+    li.setAttribute('role', 'option')
+    li.dataset.version = v
+    if (isIncompatible(v)) li.classList.add('incompatible')
+    ul.appendChild(li)
+  }
+}
+
 function render(snap: ClawLiteSnapshot | null | undefined): void {
   if (!snap) return
   snapshot = snap
+  activeVersionJob = snap.versionJob || null
+  renderVersionJob(activeVersionJob)
 
   const state = snap.state || 'stopped'
   const label = STATE_LABEL[state] || state
@@ -181,7 +304,11 @@ function render(snap: ClawLiteSnapshot | null | undefined): void {
   if (document.activeElement !== el.fWorkspace) el.fWorkspace.value = s.workspace || ''
   if (document.activeElement !== el.fDshHome) el.fDshHome.value = s.dshHome || ''
   if (document.activeElement !== el.fDshVersion) {
-    el.fDshVersion.value = s.dshVersion || 'latest'
+    const pref = s.dshVersion || 'latest'
+    const display = pref !== 'latest' ? pref : snap.dshVersion || pref
+    el.fDshVersion.value = display
+    versionDisplay = display
+    versionStored = pref
   }
   // 与其它字段一致：聚焦时不回填，避免用户正按方向键选择打开方式时被覆盖
   if (document.activeElement !== el.fOpenMode) el.fOpenMode.value = s.openMode || 'window'
@@ -266,7 +393,7 @@ function settingsChanged(): boolean {
   if (el.fPort.value.trim() !== String(s.port ?? PORT_DEFAULT)) return true
   if (el.fWorkspace.value.trim() !== (s.workspace || '')) return true
   if (el.fDshHome.value.trim() !== (s.dshHome || '')) return true
-  if (el.fDshVersion.value.trim() !== (s.dshVersion || 'latest')) return true
+  if (el.fDshVersion.value.trim() !== versionDisplay) return true
   if (el.fOpenMode.value !== (s.openMode || 'window')) return true
   return el.fAuto.checked !== !!s.autoStart
 }
@@ -297,13 +424,26 @@ async function submitSettings(): Promise<void> {
     toast(PORT_HINT, true)
     return
   }
+  // 不兼容版本拦截：用户直接点保存（不经过 change）也要阻止
+  const pendingVersion =
+    el.fDshVersion.value.trim() === versionDisplay
+      ? versionStored
+      : el.fDshVersion.value.trim() || 'latest'
+  if (isIncompatible(pendingVersion)) {
+    toast(INCOMPATIBLE_MSG, true)
+    return
+  }
   const settings = {
     port,
     autoStart: el.fAuto.checked,
     openMode: el.fOpenMode.value,
     dshHome: el.fDshHome.value.trim(),
     workspace: el.fWorkspace.value.trim(),
-    dshVersion: el.fDshVersion.value.trim() || 'latest',
+    // 未改动的版本字段保持原偏好（latest 语义不被显示值钉死）
+    dshVersion:
+      el.fDshVersion.value.trim() === versionDisplay
+        ? versionStored
+        : el.fDshVersion.value.trim() || 'latest',
   }
   const res = await call('harness_save_settings', { settings })
   render(res?.snap || res)
@@ -389,25 +529,127 @@ function bind(): void {
     })
   )
 
-  // 刷新 npm 上的 DSH 版本列表，填入 datalist 供用户选择
+  // 刷新 npm 上的 DSH 版本列表，填充下拉面板（始终显示全量列表）
   el.btnRefreshVersions.addEventListener('click', () =>
     guard(async () => {
       el.btnRefreshVersions.disabled = true
+      el.btnRefreshVersions.classList.add('busy')
+      el.btnRefreshVersions.textContent = '获取中…'
       try {
         const versions = (await bridge().listVersions()) as string[]
-        const list = document.getElementById('dsh-version-list')
-        if (list && versions.length) {
-          list.textContent = ''
-          for (const v of versions) {
-            const opt = document.createElement('option')
-            opt.value = v
-            list.appendChild(opt)
-          }
-        }
+        cachedVersionList = versions
+        if (versions.length) renderVersionDropdown()
         toast(versions.length ? `已刷新版本列表（${versions.length} 个）` : '无可用版本')
       } finally {
         el.btnRefreshVersions.disabled = false
+        el.btnRefreshVersions.classList.remove('busy')
+        el.btnRefreshVersions.textContent = '刷新列表'
       }
+    })
+  )
+
+  // 版本号即时校验：不兼容版本拦截 + 列表外手输值弱提示
+  el.fDshVersion.addEventListener('input', () => {
+    updateSaveHint()
+    const v = el.fDshVersion.value.trim()
+    const hintEl = document.getElementById('dsh-version-hint')
+    if (!hintEl) return
+    if (!v || v === 'latest' || v === versionDisplay) {
+      hintEl.textContent = DEFAULT_VERSION_HINT
+      hintEl.classList.remove('warn')
+    } else if (isIncompatible(v)) {
+      hintEl.textContent = INCOMPATIBLE_MSG
+      hintEl.classList.add('warn')
+    } else if (cachedVersionList.length && !cachedVersionList.includes(v)) {
+      hintEl.textContent = `「${v}」不在已获取的版本列表中，仍会立即尝试下载，失败会回退内置运行时`
+      hintEl.classList.add('warn')
+    } else {
+      hintEl.textContent = DEFAULT_VERSION_HINT
+      hintEl.classList.remove('warn')
+    }
+  })
+
+  // 选定版本即开始下载：下拉选中或手输确认（change，非逐键 input）后立即拉取，
+  // 不再等保存、也不等下次启动。保存路径另有兜底触发（主进程 saveSettings），
+  // 两条路径最终都收敛到 harness.prepareVersion 的幂等复用。
+  // 不兼容版本直接拦截，不发起下载。
+  el.fDshVersion.addEventListener('change', () => {
+    const v = el.fDshVersion.value.trim()
+    if (!v || v === versionDisplay) return
+    if (isIncompatible(v)) {
+      toast(INCOMPATIBLE_MSG, true)
+      return
+    }
+    void guard(async () => {
+      render(await bridge().prepareVersion(v))
+    })
+  })
+
+  // 下拉面板切换按钮
+  el.btnToggleVersionList.addEventListener('click', (e) => {
+    e.stopPropagation()
+    toggleVersionDropdown()
+  })
+
+  // 下拉面板选项点击：不兼容版本拦截，兼容版本填入输入框并触发 change
+  el.versionDropdownList.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement
+    const version = target.dataset?.version
+    if (!version) return
+    if (isIncompatible(version)) {
+      toast(INCOMPATIBLE_MSG, true)
+      return
+    }
+    el.fDshVersion.value = version
+    toggleVersionDropdown(true)
+    el.fDshVersion.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+
+  // 点击面板外部收起下拉
+  document.addEventListener('click', (e) => {
+    if (!versionDropdownOpen) return
+    const target = e.target as HTMLElement
+    if (
+      el.versionDropdown.contains(target) ||
+      el.btnToggleVersionList.contains(target) ||
+      el.fDshVersion.contains(target)
+    )
+      return
+    toggleVersionDropdown(true)
+  })
+
+  // 下载完成后热切换：主进程用新版本重启 DSH 子进程并重新探活，应用本身不重启
+  el.btnApplyVersion.addEventListener('click', () =>
+    guard(async () => {
+      const job = activeVersionJob
+      const v = job?.version || el.fDshVersion.value.trim()
+      if (!v) {
+        toast('请先选择 DSH 版本', true)
+        return
+      }
+      if (isIncompatible(v)) {
+        toast(INCOMPATIBLE_MSG, true)
+        return
+      }
+      el.btnApplyVersion.disabled = true
+      el.btnApplyVersion.classList.add('busy')
+      el.btnApplyVersion.textContent = '正在切换…'
+      try {
+        render(await bridge().applyVersion(v, true))
+        toast(`已切换到 DSH ${v}`)
+      } finally {
+        el.btnApplyVersion.classList.remove('busy')
+        // 失败时按钮需恢复为可点（成功路径的快照已把面板收起）
+        renderVersionJob(activeVersionJob)
+      }
+    })
+  )
+
+  // 取消下载：中止进行中的 npm 进程（保留已落盘内容与缓存，不删目录）；
+  // 已完成/失败时按钮转为「关闭」，仅收起面板
+  el.btnCancelDownload.addEventListener('click', () =>
+    guard(async () => {
+      render(await bridge().cancelVersion())
     })
   )
 
@@ -462,6 +704,7 @@ async function boot(): Promise<void> {
       dshDir: '',
       dshHome: '',
       workspace: '',
+      versionJob: null,
       logs: [],
       settings: {
         port: PORT_DEFAULT,
@@ -488,6 +731,33 @@ async function boot(): Promise<void> {
       snap.logs.length < prevCount ||
       (snap.logs.length === prevCount && snap.logs[0] !== prevFirst)
     if (truncated) rebuildLog(snap.logs)
+  })
+
+  // 下载进度走独立轻量通道：不随 harness:state 快照重传整段日志，
+  // 只刷新进度面板，避免下载期间的高频帧把日志区一起重绘
+  bridge().onVersionProgress((job) => {
+    activeVersionJob = job || null
+    renderVersionJob(activeVersionJob)
+    // 下载完成的下一拍自动切换并启动：应用不重启，由主进程停旧起新。
+    // 以任务自身版本为准（而非输入框当前值），避免用户在下载期间改了输入。
+    // 完成后仍保留面板与「关闭」按钮，切换失败时用户可手动重试。
+    if (job?.phase === 'done' && job.installed && job.version && !autoSwitching) {
+      // 不兼容版本不应走到下载完成，但防御性检查
+      if (isIncompatible(job.version)) {
+        toast(`${job.version} ${INCOMPATIBLE_MSG}`, true)
+        return
+      }
+      autoSwitching = true
+      toast(`DSH ${job.version} 下载完成，正在切换并启动…`)
+      void guard(async () => {
+        try {
+          render(await bridge().applyVersion(job.version, true))
+          toast(`已切换到 DSH ${job.version}`)
+        } finally {
+          autoSwitching = false
+        }
+      })
+    }
   })
 
   bridge().onLog((line) => {

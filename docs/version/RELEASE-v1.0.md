@@ -30,7 +30,15 @@
 
 - macOS 包默认不签名 / 未公证，首次打开需右键「打开」绕过 Gatekeeper；仍被拦截可在终端执行 `xattr -dr com.apple.quarantine "/Applications/clawLite.app"`（路径按实际包名调整）解除隔离标记
 - 依赖树约 300MB，安装包体积较大（压缩后 dmg 约 150MB）
-- 内置 DSH 版本由 `scripts/fetch-runtime.mjs` 的 `DSH_VERSION`（当前 `0.1.5-rc.3`）决定，升级需重跑 `npm run runtime:force`
+- 内置 DSH 版本由 `scripts/fetch-runtime.ts` 的 `DSH_VERSION`（当前 `0.1.5-rc.3`）决定，升级需重跑 `npm run runtime:force`。**当前 Electron 版本与 DSH v0.1.7 存在兼容冲突，建议维持 `0.1.5-rc.3` 作为内置运行时**；待后续 Electron 升级迭代支持 v0.1.7-rc.2 后再切换
+
+### DSH 运行时版本兼容性说明（2026-09-25 · 不推进版本号）
+
+- **背景**：DSH v0.1.7 系列（含 v0.1.7-rc.2）引入了对更新版 Node / Electron 运行时的依赖，与当前项目锁定的 Electron 版本存在兼容冲突——直接使用 v0.1.7 作为内置运行时会启动失败或运行异常。
+- **当前建议**：内置 DSH 运行时维持 **v0.1.5-rc.3**（`scripts/fetch-runtime.ts` 的 `DSH_VERSION` 默认值），该版本与当前 Electron 完全兼容，已在本项目多轮审计中验证稳定。
+- **后续升级路径**：待 Electron 升级迭代并确认支持 v0.1.7-rc.2 后，将 `DSH_VERSION` 切换至 `0.1.7-rc.2` 并重跑 `npm run runtime:force` 刷新内置运行时。届时同步更新本说明与 `scripts/fetch-runtime.ts` 的默认值。
+- **用户影响**：通过安装包分发的终端用户无需任何操作，安装包内已预置兼容的 v0.1.5-rc.3 运行时。开发者本地刷新运行时（`npm run runtime:force`）时请勿手动指定 v0.1.7 系列版本。
+- 版本号维持 **v1.0.0**（纯文档说明，无代码变更，按 §0 不推进版本号）。
 
 ### 待发布优化（2026-09-24 · 不推进版本号）
 

@@ -22,12 +22,13 @@ import os from 'node:os'
 import path from 'node:path'
 import type { WindowBounds } from './settings.ts'
 import { PORT_MIN, PORT_MAX, PORT_DEFAULT, LOG_LIMIT } from '../src/shared/constants.ts'
+import { fetchLatestVersion, fetchAllVersions, resolveNpmCli, errText } from './version-fetch.ts'
 import {
-  fetchLatestVersion,
-  fetchAllVersions,
-  ensureVersionInstalled,
-  errText,
-} from './version-fetch.ts'
+  downloadVersion,
+  isVersionReady,
+  versionDir,
+  type VersionJob,
+} from './version-download.ts'
 
 const READY_TIMEOUT_MS = 60_000
 const STOP_GRACE_MS = 6_000
@@ -64,6 +65,8 @@ export interface Snapshot {
   dshHome: string
   workspace: string
   settings: HarnessSettings
+  /** 版本下载任务快照（无任务为 null），渲染层据此绘制下载进度 */
+  versionJob: VersionJob | null
   logs: string[]
 }
 
@@ -142,6 +145,17 @@ export class HarnessManager extends EventEmitter {
     dshVersion: 'latest',
   }
   _stopping = false
+  /**
+   * 当前（或最近一次）版本下载任务的状态快照。
+   * 随 harness:versionProgress 事件推送，渲染层据此画进度条；
+   * 也随 snapshot() 透传，使界面重载后仍能恢复进度显示。
+   */
+  versionJob: VersionJob | null = null
+  /** 进行中任务的版本号 / 版本策略，用于去重与"切换版本先中止旧任务" */
+  private _jobKey = ''
+  private _jobPolicy = ''
+  private _jobPromise: Promise<VersionJob> | null = null
+  private _jobAbort: AbortController | null = null
 
   constructor(opts: HarnessOptions) {
     super()
@@ -198,66 +212,270 @@ export class HarnessManager extends EventEmitter {
     return { ok: true }
   }
 
+  /* ── 版本下载与热切换 ────────────────────────────────────────── */
+
+  /** 平台标签（win-x64 / darwin-arm64 / linux-x64），供 npm --os/--cpu 选择预编译二进制 */
+  platformTag(): string {
+    return process.platform === 'win32'
+      ? 'win-x64'
+      : process.platform === 'darwin'
+        ? `darwin-${process.arch}`
+        : `linux-${process.arch}`
+  }
+
+  /** 版本策略归一化：空串按 latest 处理 */
+  private normalizePolicy(policy: string): string {
+    return (policy || '').trim() || 'latest'
+  }
+
+  /**
+   * 展开版本策略为具体版本号：具体版本号原样返回；latest 查 registry 最新版。
+   * registry 不可达时返回 ''，由调用方决定提示还是回退内置。
+   */
+  private async resolveTarget(policy: string): Promise<string> {
+    if (policy !== 'latest') return policy
+    try {
+      const latest = await fetchLatestVersion()
+      this.log(`[claw-lite] registry 最新 DSH 版本：${latest}`)
+      return latest
+    } catch (e) {
+      this.log(`[claw-lite] ⚠ 无法查询最新版本（离线？）：${errText(e)}`)
+      return ''
+    }
+  }
+
+  /** 构造一个 VersionJob（未给出的字段用默认值补齐） */
+  private jobOf(version: string, policy: string, patch: Partial<VersionJob>): VersionJob {
+    return {
+      policy,
+      version,
+      phase: 'resolving',
+      percent: 1,
+      fetched: 0,
+      total: 0,
+      message: '',
+      error: '',
+      startedAt: Date.now(),
+      finishedAt: 0,
+      installed: false,
+      ...patch,
+    }
+  }
+
+  private setJob(job: VersionJob): VersionJob {
+    this.versionJob = job
+    this.emit('progress', { ...job })
+    return job
+  }
+
+  /**
+   * 确保某版本已下载到 userData/dsh-versions/<ver>（幂等 / 可复用 / 可取消）。
+   * 同一版本进行中直接复用同一 Promise（避免并发双跑 npm）；
+   * 切换版本时先中止旧任务，再开新任务。
+   */
+  async ensureVersion(version: string, policy: string): Promise<VersionJob> {
+    if (isVersionReady(this.userDataDir, version)) {
+      return this.setJob(
+        this.jobOf(version, policy, {
+          phase: 'done',
+          percent: 100,
+          message: '本地已下载，可直接切换启动',
+          finishedAt: Date.now(),
+          installed: true,
+        })
+      )
+    }
+    if (this._jobPromise && this._jobKey === version) return this._jobPromise
+    if (this._jobPromise) await this._cancelVersion(false)
+
+    const ac = new AbortController()
+    this._jobAbort = ac
+    this._jobKey = version
+    this._jobPolicy = policy
+    const p = downloadVersion({
+      version,
+      policy,
+      userDataDir: this.userDataDir,
+      npmCli: resolveNpmCli(process.execPath, this.resourcesPath, this.appRoot),
+      nodeExec: process.execPath,
+      platform: this.platformTag(),
+      onProgress: (job) => this.setJob(job),
+      onLog: (line) => this.log(line),
+      signal: ac.signal,
+    })
+      .catch((e) =>
+        this.jobOf(version, policy, {
+          phase: 'error',
+          percent: 0,
+          message: `下载失败：${errText(e)}`,
+          error: errText(e),
+          finishedAt: Date.now(),
+        })
+      )
+      .then((job) => {
+        if (this._jobKey === version) {
+          this._jobPromise = null
+          this._jobAbort = null
+        }
+        return job
+      })
+    this._jobPromise = p
+    return p
+  }
+
+  /**
+   * 选定版本即开始下载（不启动 DSH）。
+   * 设置页切换版本号 / 保存设置时调用；返回快照供渲染层立即回显。
+   */
+  async prepareVersion(policy: string): Promise<Snapshot> {
+    const want = this.normalizePolicy(policy)
+    // 同策略已在下载 → 不打断，也不重置进度
+    if (this._jobPromise && this._jobPolicy === want) return this.snapshot()
+
+    this._jobKey = ''
+    this._jobPolicy = want
+    this.setJob(this.jobOf('', want, { phase: 'resolving', percent: 1, message: '正在解析版本…' }))
+
+    const version = await this.resolveTarget(want)
+    if (!version) {
+      this.setJob(
+        this.jobOf('', want, {
+          phase: 'error',
+          percent: 0,
+          message: '无法获取 DSH 版本号（registry 不可达）',
+          error: 'registry 不可达',
+          finishedAt: Date.now(),
+        })
+      )
+      return this.snapshot()
+    }
+    // 不在此处预置 _jobKey：ensureVersion 用「_jobPromise && _jobKey === version」
+    // 判定复用，提前写入会让上一版本的 in-flight 任务被误判为同版本而复用。
+    await this.ensureVersion(version, want)
+    return this.snapshot()
+  }
+
+  /**
+   * 热切换到指定版本：确保已下载 → 落定版本策略并指向该版本 → 停旧起新。
+   * 这是"选定版本即可切换启动"的核心：全程不重启应用、不等下次打开。
+   * start=false 时只切换不启动（用于"仅切换"语义）。
+   */
+  async applyVersion(policy: string, start = true): Promise<Snapshot> {
+    const want = this.normalizePolicy(policy)
+    const version = await this.resolveTarget(want)
+    if (!version) {
+      this.setState('error', '无法获取 DSH 版本号（registry 不可达）')
+      return this.snapshot()
+    }
+    const job = await this.ensureVersion(version, want)
+    if (!job.installed) {
+      this.log(`[claw-lite] ✗ DSH ${version} 尚未就绪，取消切换：${job.error || job.message}`)
+      return this.snapshot()
+    }
+
+    this.settings.dshVersion = want
+    this._resolvedRoot = versionDir(this.userDataDir, version)
+    this.log(`[claw-lite] 已切换 DSH 运行时 → ${this._resolvedRoot}（${version}）`)
+
+    // 停掉旧版本进程，再用新版本启动（不重启应用）
+    if (this.child || this.starting) await this.stop()
+    if (!start) {
+      if (!this.child) this.setState('stopped', `已切换到 DSH ${version}`)
+      this.clearVersionJob(version, want)
+      return this.snapshot()
+    }
+    await this.start()
+    // 切换已落地 → 收起下载面板：快照若仍停在 done，渲染层会在每次状态
+    // 广播时把「切换并启动」重新弹回来，看起来像没生效。
+    // 启动失败（state=error）时保留 done 帧，面板与重试入口一并留在原位。
+    if (this.snapshot().state !== 'error') this.clearVersionJob(version, want)
+    return this.snapshot()
+  }
+
+  /** 把下载任务收敛回 idle，仅保留一句结论（面板据此收起） */
+  private clearVersionJob(version: string, policy: string): void {
+    this.setJob(
+      this.jobOf(version, policy, {
+        phase: 'idle',
+        percent: 0,
+        message: `已切换到 DSH ${version}`,
+        finishedAt: Date.now(),
+        installed: true,
+      })
+    )
+  }
+
+  /** 取消进行中的下载（保留已落盘内容与 npm 缓存，不删目录） */
+  async cancelVersion(): Promise<Snapshot> {
+    return this._cancelVersion(true)
+  }
+
+  /**
+   * 取消实现。announce=false 用于"切换版本时中止旧任务"这一内部路径：
+   * 该路径紧接着就会置入新任务，若也播报"已取消下载"，渲染层会先收起
+   * 面板再重开，出现一次无意义的闪动。
+   */
+  private async _cancelVersion(announce: boolean): Promise<Snapshot> {
+    const pending = this._jobPromise
+    const policy = this._jobPolicy
+    if (this._jobAbort) this._jobAbort.abort()
+    if (pending) {
+      try {
+        await pending
+      } catch {}
+    }
+    this._jobPromise = null
+    this._jobAbort = null
+    this._jobKey = ''
+    // 收敛到 idle：否则快照会停留在最后一次进度帧，渲染层的进度条
+    // 会永远卡在取消时的百分比上（既没在下载，也没提示已取消）
+    if (announce) {
+      this.setJob(
+        this.jobOf('', policy, { phase: 'idle', percent: 0, message: '已取消下载', finishedAt: Date.now() })
+      )
+    }
+    return this.snapshot()
+  }
+
   /* ── 版本解析（运行时拉取） ──────────────────────────────────── */
 
   /**
    * 解析本次启动要用的 DSH 根目录，优先级：
    *   1. settings.dshVersion 指向的版本已装在 userData/dsh-versions/<ver> → 直接用
-   *   2. 指定/解析出的版本未装 + 有网 → npm install 到该目录
-   *   3. 无网或安装失败 → 回退打包内置 resources/dsh
+   *   2. 指定/解析出的版本未装 + 有网 → 下载到该目录（带进度上报）
+   *   3. 无网或下载失败 → 回退打包内置 resources/dsh
    * 返回 { root, version }：version 为实际解析到的 dsh 版本号（latest 已展开）。
    */
   async resolveRuntime(): Promise<{ root: string; version: string }> {
-    const want = (this.settings.dshVersion || 'latest').trim()
-    const useLatest = !want || want === 'latest'
+    const want = this.normalizePolicy(this.settings.dshVersion)
 
     // 1) 展开目标版本号
-    let target = useLatest ? '' : want
-    if (useLatest) {
-      try {
-        target = await fetchLatestVersion()
-        this.log(`[claw-lite] 最新 DSH 版本：${target}`)
-      } catch (e) {
-        this.log(`[claw-lite] ⚠ 无法查询最新版本（离线？），回退内置：${errText(e)}`)
-      }
+    let target: string
+    if (want === 'latest') {
+      target = await this.resolveTarget('latest')
     } else {
+      target = want
       this.log(`[claw-lite] 使用指定 DSH 版本：${target}`)
     }
 
-    // 2) 已安装的用户版本目录
+    // 2) 已下载的用户版本目录
     if (target) {
-      const verDir = path.join(this.userDataDir, 'dsh-versions', target)
-      const bin = path.join(verDir, 'app', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-      if (fs.existsSync(bin)) {
+      if (isVersionReady(this.userDataDir, target)) {
+        const verDir = versionDir(this.userDataDir, target)
         this._resolvedRoot = verDir
         return { root: verDir, version: target }
       }
-      // 3) 尝试安装
-      if (target) {
-        const plat =
-          process.platform === 'win32'
-            ? 'win-x64'
-            : process.platform === 'darwin'
-              ? `darwin-${process.arch}`
-              : `linux-${process.arch}`
-        try {
-          const r = ensureVersionInstalled(
-            target,
-            this.userDataDir,
-            process.execPath,
-            this.resourcesPath,
-            plat
-          )
-          if (r.ok) {
-            this.log(`[claw-lite] ✓ 已从 npm 拉取 DSH ${target}`)
-            this._resolvedRoot = r.dshRoot
-            return { root: r.dshRoot, version: target }
-          }
-          this.log(`[claw-lite] ⚠ DSH ${target} 拉取失败，回退内置：${r.reason}`)
-        } catch (e) {
-          this.log(`[claw-lite] ⚠ DSH ${target} 拉取异常，回退内置：${errText(e)}`)
-        }
+      // 3) 现拉（start() 期间同样推送进度，界面可见）
+      const job = await this.ensureVersion(target, want)
+      if (job.installed) {
+        this.log(`[claw-lite] ✓ 已从 npm 拉取 DSH ${target}`)
+        const verDir = versionDir(this.userDataDir, target)
+        this._resolvedRoot = verDir
+        return { root: verDir, version: target }
       }
+      this.log(`[claw-lite] ⚠ DSH ${target} 拉取失败，回退内置：${job.error || job.message}`)
+    } else {
+      this.log('[claw-lite] ⚠ 未能解析目标版本，回退内置运行时')
     }
 
     // 4) 回退内置
@@ -351,6 +569,8 @@ export class HarnessManager extends EventEmitter {
       dshHome: this.dshHome,
       workspace: this.settings.workspace || '',
       settings: { ...this.settings },
+      // 版本下载任务快照：界面刷新/重载后据此恢复进度条，无需额外查询
+      versionJob: this.versionJob ? { ...this.versionJob } : null,
       logs: [...this.logs],
     }
   }
@@ -364,29 +584,42 @@ export class HarnessManager extends EventEmitter {
     // 否则两段流程会互相覆盖 child 句柄，新起的进程会被 stop() 的超时分支误杀
     if (this._stopping) return this.snapshot()
 
-    // 解析运行时（latest→版本号→用户目录安装或内置兜底）。
+    // 先占住 starting：resolveRuntime 可能包含"该版本未下载 → 现拉"（数十秒异步），
+    // 期间若并发点击启动，两个调用会各自解析出同一版本后双双 spawn，
+    // 后一个覆盖 child 句柄、前一个沦为孤儿进程。
+    this.starting = true
+    this._stopping = false
+
+    // 解析运行时（latest→版本号→用户目录下载或内置兜底）。
     // 必须在 checkRuntime / spawn 之前完成，使 dshEntry / dshVersion 指向实际根目录。
     let root: string
     try {
       const r = await this.resolveRuntime()
       root = r.root
     } catch (e) {
+      this.starting = false
       const msg = `运行时解析失败：${e instanceof Error ? e.message : String(e)}`
       this.setState('error', msg)
       this.log(`[claw-lite] ✗ ${msg}`)
       return this.snapshot()
     }
 
+    // 用户在解析（下载）期间点了「取消下载」→ 尊重其意图，不要用内置版本兜底启动
+    if (this.versionJob?.phase === 'idle') {
+      this.starting = false
+      this.setState('stopped', '已取消下载')
+      return this.snapshot()
+    }
+
     const entry = path.join(root, 'app', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
     if (!fs.existsSync(entry)) {
+      this.starting = false
       const msg = `未找到 DSH 运行时：${entry}`
       this.setState('notInstalled', msg)
       this.log(`[claw-lite] ✗ ${msg}`)
       return this.snapshot()
     }
 
-    this.starting = true
-    this._stopping = false
     this.setState('starting', '正在启动 DSH 服务…')
     this.log('[claw-lite] 正在启动 DSH 服务…')
 

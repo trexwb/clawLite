@@ -5,6 +5,9 @@
    使 DSH 版本与应用版本解耦：用户装一次 clawLite，即可在设置里选 latest
    （自动跟随 npm 最新版）或锁定某个具体版本，无需等应用发版。
 
+   本文件只负责"查版本号 + 定位 npm"两件与安装过程无关的事；
+   真正的下载/安装（带进度上报、可取消）在 version-download.ts。
+
    设计要点：
      • 版本号来自 npm registry（HTTPS），不经过渲染层 CSP 限制
        （主进程是纯 Node，无 CSP 约束）。
@@ -17,7 +20,6 @@
        @electron/rebuild（见 AGENTS.md / 本文件底部 TODO）。
    ═══════════════════════════════════════════════════════════════════ */
 
-import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -53,81 +55,26 @@ export async function fetchAllVersions(): Promise<string[]> {
 /**
  * 定位 npm-cli.js：优先级
  *   1. 应用内置（electron-builder 把 npm 打到 resourcesPath/npm）
- *   2. Electron 自带（开发态 process.execPath 旁）
- *   3. 系统 PATH（兜底，用户机器通常没有）
+ *   2. 项目/应用自身依赖树（开发态 node_modules/npm，或 asar 内的 npm）
+ *   3. Electron 自带（开发态 process.execPath 旁）
+ *   4. 系统 PATH（兜底，用户机器通常没有）
  */
-export function resolveNpmCli(electronExecPath: string, resourcesPath: string): string | null {
+export function resolveNpmCli(
+  electronExecPath: string,
+  resourcesPath: string,
+  appRoot = ''
+): string | null {
   const exeDir = path.dirname(electronExecPath)
   const candidates = [
     path.join(resourcesPath, 'npm', 'bin', 'npm-cli.js'),
+    appRoot ? path.join(appRoot, 'node_modules', 'npm', 'bin', 'npm-cli.js') : '',
     path.join(exeDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
     path.join(exeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
   ]
-  for (const c of candidates) if (fs.existsSync(c)) return c
+  for (const c of candidates) if (c && fs.existsSync(c)) return c
   return null
 }
 
-/** 在版本目录写入一个最小 package.json，让 npm install 把 dsh 装进 app/node_modules */
-function writeAppPackageJson(appDir: string, version: string): void {
-  fs.mkdirSync(appDir, { recursive: true })
-  fs.writeFileSync(
-    path.join(appDir, 'package.json'),
-    JSON.stringify(
-      {
-        name: 'clawlite-dsh-runtime',
-        private: true,
-        version: '1.0.0',
-        description: `Claw Lite DSH 运行时依赖树（${version}）`,
-        dependencies: { '@deepseek-ai/dsh': version },
-      },
-      null,
-      2
-    ) + '\n'
-  )
-}
-
-export interface EnsureResult {
-  ok: boolean
-  dshRoot: string
-  reason?: string
-}
-
-/**
- * 确保某版本已安装到 userData/dsh-versions/<ver>/app/node_modules。
- * 已存在则直接返回；否则 npm install 到该目录。
- */
-export function ensureVersionInstalled(
-  version: string,
-  userDataDir: string,
-  electronExecPath: string,
-  resourcesPath: string,
-  platform: string
-): EnsureResult {
-  const verDir = path.join(userDataDir, 'dsh-versions', version)
-  const appDir = path.join(verDir, 'app')
-  const dshBin = path.join(appDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-  if (fs.existsSync(dshBin)) return { ok: true, dshRoot: verDir }
-
-  writeAppPackageJson(appDir, version)
-
-  const npmCli = resolveNpmCli(electronExecPath, resourcesPath)
-  const args = ['install', '--omit=dev', '--no-audit', '--no-fund', '--loglevel=error']
-  if (platform.startsWith('win')) args.push('--os=win32', '--cpu=x64')
-  else if (platform.startsWith('darwin')) args.push('--os=darwin', `--cpu=${platform.endsWith('arm64') ? 'arm64' : 'x64'}`)
-  else args.push('--os=linux', '--cpu=x64')
-
-  try {
-    if (npmCli) {
-      execFileSync(electronExecPath, [npmCli, ...args], { cwd: appDir, stdio: 'inherit' })
-    } else {
-      execFileSync('npm', args, { cwd: appDir, stdio: 'inherit', shell: platform.startsWith('win') })
-    }
-  } catch (e) {
-    return { ok: false, dshRoot: verDir, reason: errText(e) }
-  }
-
-  if (!fs.existsSync(dshBin)) {
-    return { ok: false, dshRoot: verDir, reason: '安装后未找到 dsh 入口（原生模块可能需针对 Electron 重编）' }
-  }
-  return { ok: true, dshRoot: verDir }
-}
+/* 说明：旧版同步阻塞的 ensureVersionInstalled 已迁移至 version-download.ts，
+   升级为可上报进度的异步实现（downloadVersion）。此处只保留 registry 查询
+   与 npm-cli 定位这两件"与安装过程无关"的纯函数。 */
