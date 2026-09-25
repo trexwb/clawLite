@@ -59,7 +59,36 @@ jobs:
         run: npx electron-builder ${{ matrix.args }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # ── 代码签名 / 公证配置：当前为「注释占位」，未启用 ──────────────────────
+          # 现状：CI 产物与本地打包一致，均为未签名版本，可正常出包与分发
+          # （macOS 首次打开需右键「打开」绕过 Gatekeeper，见 README「已知限制」）。
+          #
+          # 下面这行在未签名状态下必须保留：显式关闭 electron-builder 的证书自动发现，
+          # 避免 runner（或本机钥匙串）里恰好存在 Developer ID 证书时被意外选中签名。
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+          # 启用 macOS 代码签名 + 公证的步骤（secrets 到位后照做即可生效）：
+          #   1) 仓库 Settings → Secrets and variables → Actions 添加以下 5 个 secrets：
+          #      CSC_LINK、CSC_KEY_PASSWORD、APPLE_ID、APPLE_APP_SPECIFIC_PASSWORD、APPLE_TEAM_ID
+          #   2) 删除上面那行 CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          #      （必须删除：该开关会关闭证书自动发现，不删则证书不会被使用，产物仍是未签名）
+          #   3) 取消下面各项的注释
+          #   4) 推送 v* tag 验证：electron-builder 日志应出现签名与 "notarization successful"，
+          #      产物可用 codesign -dv --verbose=4 与 spctl -a -vv 复核
+          #
+          # 备注：证书需为 Developer ID Application；electron-builder.yml 的 mac 段已备好
+          # hardenedRuntime 与 entitlements，无需改动。electron-builder 检测到
+          # APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID 三者齐全时会自动走
+          # notarytool 公证（缺任一即报错），也不需要额外写 notarize 配置。
+          # Windows 代码签名用的是另一组变量（WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD），
+          # 如需一并启用请另加，当前不启用。
+          #
+          # CSC_LINK: ${{ secrets.CSC_LINK }}                     # .p12 证书（base64 文本或可下载 URL）
+          # CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}     # 上述 .p12 的导出密码
+          # APPLE_ID: ${{ secrets.APPLE_ID }}                     # 公证用 Apple ID
+          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}  # Apple ID 的 App 专用密码
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}           # Apple Developer Team ID
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4

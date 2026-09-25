@@ -274,4 +274,5 @@ dsh 子进程 stdout → attachPipes → log(line) → _captureUrl(line) 匹配
 - **本地自检**：`npm run check`（覆盖 JSON 合法性、关键文件存在、全量 JS 语法、IPC 契约三层对齐、内置 DSH 运行时完整性、无残留 Tauri 依赖、状态枚举双向可达、日志着色类名 ↔ CSS 交叉、端口范围三方一致、安全与无障碍基线硬断言）。任何改动后必须全绿。
 - **产物校验**：`npm run verify:dist`（需先 `npm run build:web`）断言 `dist/index.html` 资源引用为相对路径、品牌图标真实产出并被引用——静态自检看不到 Vite 产物。
 - **CI 流水线**：`.github/workflows/release.yml` 在推送 `v*` tag（或手动触发）后，于 macOS / Windows runner 执行 `npm ci → npm run runtime → npm run check → npm run build:web → npm run verify:dist → electron-builder`，产物汇总后由 `publish` job 创建 GitHub Release。
-- **打包**：`npm run dist:mac` / `dist:win` / `dist:linux` / `dist`，产物输出 `release/`。macOS 本地打包默认不签名（`CSC_IDENTITY_AUTO_DISCOVERY=false`），正式分发需具备证书的机器签名/公证。
+- **打包**：`npm run dist:mac` / `dist:win` / `dist:linux` / `dist`，产物输出 `release/`。macOS 打包当前**未签名**（`CSC_IDENTITY_AUTO_DISCOVERY=false` 关闭证书自动发现，CI 与本地一致），未配置签名凭据也能正常出包；正式分发需签名 / 公证。
+- **签名配置占位**：`.github/workflows/release.yml` 已把 `CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` 以注释形式预留并注明启用步骤（配 secrets → 删除 `CSC_IDENTITY_AUTO_DISCOVERY: "false"` 行 → 取消注释 → 推 tag 验证），启用后无需改 `electron-builder.yml`；届时须同步更新 README「已知限制」与 `docs/wiki/自检与发布流程.md` 的签名状态表述。
