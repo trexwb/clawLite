@@ -106,6 +106,20 @@
 - **验证**：`node --check` 覆盖 `electron/`、`src/`、`scripts/` 全部脚本通过；`node scripts/check.mjs` 全绿（状态枚举双向 6 项可达、着色类名 2 项交叉、端口三方一致、安全基线全 PASS；仅 1 WARN 为本地未拉取内置 DSH 运行时）；`node scripts/verify-dist.mjs` 通过（`dist/assets/icon-DYtyWVWp.png` 已产出并被引用）。
 - 版本号维持 **v1.0.0**（同日同模块缺陷修复，按 §0 不推进版本号）。
 
+### TypeScript 化与源码后缀统一迁移（2026-09-25 · 不推进版本号）
+
+- **背景**：源码此前混用 `.cjs`（主进程）/ `.mjs`（脚本）/ `.js`（渲染层）三种后缀，构建链与自检脚本各自适配，维护成本高。用户选定**路线 A：主进程纯 ESM**，目标为「`electron/`、`scripts/`、`src/` 源码一律 `.ts`，产物一律 `.js`，仓库不再出现 `.cjs` / `.mjs`」。
+- **源码全量 TS 化**：`electron/main.ts`、`electron/preload.ts`、`electron/harness.ts`、`electron/settings.ts`、`src/main.ts`（新增 `src/env.d.ts` 声明 `window.clawLite` 桥契约）、`scripts/check.ts`、`scripts/verify-dist.ts`、`scripts/fetch-runtime.ts`、`vite.config.ts`；原 9 个 `.cjs` / `.mjs` / `.js` 源文件全部删除（`index.html` 入口同步指向 `/src/main.ts`）。
+- **新增构建层 `scripts/build-electron.ts`（esbuild）**：产出 `dist-electron/main.js`（ESM）与 `dist-electron/preload.js`（CJS），并打印产物清单。`package.json` 的 `main` 改指 `dist-electron/main.js`，新增 `build:electron` / `build` 脚本，`start` / `dist*` / CI 均先构建再打包。新增 `tsconfig.json`（ESM + bundler 解析 + strict + `noEmit`，覆盖 `electron/` `scripts/` `src/`）。
+- **主进程走纯 ESM**：路径基准由 `__dirname` 改为 `import.meta.url`（`MODULE_DIR` / `APP_ROOT` 推导），清除全部 `require`；根 `package.json` 保留 `type:module`（撤掉反而会请回 `.mjs`）。
+- **preload 是唯一例外**：产物 `preload.js` 由 Electron 按 CJS 加载（Electron 忽略 `type:module`，仅按 preload 语义处理），这也是 `sandbox:true` 下唯一可行形式（ESM preload 必须 `.mjs` 且要求 `sandbox:false`，不可用于本项目）。安全基线 `sandbox` / `contextIsolation` / `nodeIntegration:false` 三项未动。
+- **脚本层直跑 `.ts`**：`scripts/*.ts` 依赖 node 原生类型擦除直接执行（无编译步骤），故本机与 CI 需 node ≥ 24——`.github/workflows/release.yml` 的 `node-version` 由 `22` 提到 `24`，并在 `npm ci` 后新增「构建主进程产物」步骤（自检与打包都要吃 `dist-electron/`）。
+- **门禁升级（`scripts/check.ts`）**：新增三类断言——① **源码后缀门禁**（`electron/` `scripts/` `src/` 无残留 `.cjs` / `.mjs` / `.js`，本次实测 11 个源文件全为 `.ts` / `.d.ts` / `.css`）；② `tsc --noEmit` **类型检查**；③ **产物模块形态**（主进程产物必须有 `import` 且无 `require`，preload 产物必须有 `require` 且无 `import`/`export`）。原 §7 状态枚举双向、§8 类名交叉、§9 端口三方、§10 安全基线断言全部保留。
+- **打包与忽略**：`electron-builder.yml` 的 `files` 由 `electron/**/*` 改为 `dist-electron/**/*`（`.ts` 源码不再随包分发）；`.gitignore` 增补 `dist-electron/`。
+- **文档同步**：`AGENTS.md`（强制规范新增「源码后缀统一」条、架构分层、文件结构树、关键函数表、命名与 ESM 主进程规范）、`README.md`（架构表新增「源码与产物」说明、前置要求 node ≥ 24、自检覆盖清单、目录结构树）逐项对齐。本文件 2026-09-24 的历史分节按「历史只增不改」保留原有 `.cjs` / `.mjs` 路径记述。
+- **验证**：`tsc --noEmit` 无类型错误；`npm run build` 成功（`dist-electron/main.js` 头部为 ESM `import`、`preload.js` 为 CJS）；`npm run check` **全绿**（1 项 WARN 为本地未拉取内置 DSH 运行时，与本次改动无关）；`npm run verify:dist` 通过；**真实启动冒烟**通过（`perf app-ready +46ms` / `perf window-ready +246ms`，渲染层无 console 报错）；**preload 桥探针**通过（沙箱与隔离与生产一致，`window.clawLite` 暴露 12 方法 + 2 事件，`window.require` / `window.process` 均未泄漏）。
+- 版本号维持 **v1.0.0**（用户明确「版本暂维持 v1.0.0」，按 §0 不推进版本号）。
+
 ---
 
 > 后续迭代分节追加于此文件顶部，格式同上（日期 + 状态 + 版本号是否推进的说明）。

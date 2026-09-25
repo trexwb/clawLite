@@ -6,10 +6,11 @@ directories:
   output: release
   buildResources: build
 
-# 只打包渲染进程产物与主进程代码；DSH 运行时走 extraResources
+# 只打包构建产物：渲染层 dist/ 与主进程 dist-electron/（.ts 源码不随包分发）；
+# DSH 运行时走 extraResources
 files:
   - dist/**/*
-  - electron/**/*
+  - dist-electron/**/*
   - package.json
   - "!**/*.{map,md,ts,tsx}"
 

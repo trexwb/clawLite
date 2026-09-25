@@ -7,93 +7,115 @@
            relaunch / appInfo
      事件  onState → Snapshot
            onLog   → String（单行，空串表示清屏）
+
+   类型声明见 src/env.d.ts（全局合并 Window.clawLite）。
    ═══════════════════════════════════════════════════════════════════ */
 
-const api = (typeof window !== 'undefined' && window.clawLite) || null
+const api: ClawLiteApi | null = (typeof window !== 'undefined' && window.clawLite) || null
 const IS_DESKTOP = !!api
 
-const $ = (id) => document.getElementById(id)
-
-const el = {
-  statusPill: $('status-pill'),
-  statusText: $('status-text'),
-  heroDot: $('hero-dot'),
-  heroTitle: $('hero-title'),
-  heroMsg: $('hero-msg'),
-  urlText: $('url-text'),
-  btnCopy: $('btn-copy'),
-  btnStart: $('btn-start'),
-  btnStop: $('btn-stop'),
-  btnRestart: $('btn-restart'),
-  btnOpenWindow: $('btn-open-window'),
-  btnOpenBrowser: $('btn-open-browser'),
-  btnInstall: $('btn-install'),
-  btnSave: $('btn-save'),
-  btnPickWs: $('btn-pick-ws'),
-  btnClearLog: $('btn-clear-log'),
-  btnUpdate: $('btn-update'),
-  infoRuntime: $('info-runtime'),
-  infoNode: $('info-node'),
-  infoDir: $('info-dir'),
-  infoHome: $('info-home'),
-  fPort: $('f-port'),
-  fOpenMode: $('f-open-mode'),
-  fWorkspace: $('f-workspace'),
-  fDshHome: $('f-dsh-home'),
-  fAuto: $('f-auto'),
-  fAutoscroll: $('f-autoscroll'),
-  saveHint: $('save-hint'),
-  log: $('log'),
-  toast: $('toast'),
-  footVersion: $('foot-version'),
+/**
+ * 取用 preload 桥。浏览器预览模式下 api 为 null，此处统一抛出，
+ * 与原先 call() 的前置判断共用同一文案。
+ */
+function bridge(): ClawLiteApi {
+  if (!api) throw new Error('当前不在桌面应用环境中')
+  return api
 }
 
-// 端口策略：与 electron/harness.cjs 的 PORT_MIN / PORT_MAX / PORT_DEFAULT、
-// index.html `#f-port` 的 min/max 同源（scripts/check.mjs §9 校验三方一致）
+/** 异常 → 可读文案（catch 到的值类型为 unknown，需显式收窄） */
+const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+/** 按 id 取元素：id 与 index.html 静态对应，取不到即为模板缺失，按 null 处理 */
+const byId = <T extends HTMLElement = HTMLElement>(id: string): T =>
+  document.getElementById(id) as T
+
+const el = {
+  statusPill: byId('status-pill'),
+  statusText: byId('status-text'),
+  heroDot: byId('hero-dot'),
+  heroTitle: byId('hero-title'),
+  heroMsg: byId('hero-msg'),
+  urlText: byId('url-text'),
+  btnCopy: byId<HTMLButtonElement>('btn-copy'),
+  btnStart: byId<HTMLButtonElement>('btn-start'),
+  btnStop: byId<HTMLButtonElement>('btn-stop'),
+  btnRestart: byId<HTMLButtonElement>('btn-restart'),
+  btnOpenWindow: byId<HTMLButtonElement>('btn-open-window'),
+  btnOpenBrowser: byId<HTMLButtonElement>('btn-open-browser'),
+  btnInstall: byId<HTMLButtonElement>('btn-install'),
+  btnSave: byId<HTMLButtonElement>('btn-save'),
+  btnPickWs: byId<HTMLButtonElement>('btn-pick-ws'),
+  btnClearLog: byId<HTMLButtonElement>('btn-clear-log'),
+  btnUpdate: byId<HTMLButtonElement>('btn-update'),
+  infoRuntime: byId('info-runtime'),
+  infoNode: byId('info-node'),
+  infoDir: byId('info-dir'),
+  infoHome: byId('info-home'),
+  fPort: byId<HTMLInputElement>('f-port'),
+  fOpenMode: byId<HTMLSelectElement>('f-open-mode'),
+  fWorkspace: byId<HTMLInputElement>('f-workspace'),
+  fDshHome: byId<HTMLInputElement>('f-dsh-home'),
+  fAuto: byId<HTMLInputElement>('f-auto'),
+  fAutoscroll: byId<HTMLInputElement>('f-autoscroll'),
+  saveHint: byId('save-hint'),
+  log: byId('log'),
+  toast: byId('toast'),
+  footVersion: byId('foot-version'),
+}
+
+// 端口策略：与 electron/harness.ts 的 PORT_MIN / PORT_MAX / PORT_DEFAULT、
+// index.html `#f-port` 的 min/max 同源（scripts/check.ts §9 校验三方一致）
 const PORT_MIN = 1024
 const PORT_MAX = 65535
 const PORT_DEFAULT = 8799
 const PORT_HINT = `监听端口需为 ${PORT_MIN}-${PORT_MAX} 的整数`
 
 /** 读取并校验端口输入：非整数或越界返回 null，由调用方显式回显错误 */
-function readPort() {
+function readPort(): number | null {
   const raw = String(el.fPort.value ?? '').trim()
   if (!/^\d+$/.test(raw)) return null
   const n = Number(raw)
   return n >= PORT_MIN && n <= PORT_MAX ? n : null
 }
 
-let snapshot = null
+let snapshot: ClawLiteSnapshot | null = null
 let logEmpty = true
 
 /* ── 通用工具 ──────────────────────────────────────────────────── */
 
-let toastTimer = null
-function toast(msg, isErr = false) {
+let toastTimer: NodeJS.Timeout | null = null
+function toast(msg: string, isErr = false): void {
   // 先解除隐藏再写文案：元素处于 display:none 时不在可访问树，
   // 先赋值会导致部分读屏不播报这条提示
   el.toast.classList.remove('hidden')
   el.toast.textContent = msg
   el.toast.classList.toggle('err', isErr)
-  clearTimeout(toastTimer)
+  if (toastTimer) clearTimeout(toastTimer)
   toastTimer = setTimeout(() => el.toast.classList.add('hidden'), 3200)
 }
 
-/** 命令名 → preload 方法映射，保持原有调用点不变 */
-const COMMANDS = {
-  harness_snapshot: () => api.snapshot(),
-  harness_start: () => api.start(),
-  harness_stop: () => api.stop(),
-  harness_restart: () => api.restart(),
-  // 语义与实现对齐：这里是「校验运行时」，通道为 harness:verify（preload 方法同名）
-  harness_verify: () => api.verify(),
-  harness_clear_logs: () => api.clearLogs(),
-  harness_save_settings: (args) => api.saveSettings(args?.settings),
-  harness_open: (args) => api.open(args?.mode),
+interface CommandArgs {
+  settings?: unknown
+  mode?: string
 }
 
-async function call(cmd, args) {
-  if (!api) throw new Error('当前不在桌面应用环境中')
+/** 命令名 → preload 方法映射，保持原有调用点不变 */
+const COMMANDS: Record<string, (args?: CommandArgs) => Promise<unknown>> = {
+  harness_snapshot: () => bridge().snapshot(),
+  harness_start: () => bridge().start(),
+  harness_stop: () => bridge().stop(),
+  harness_restart: () => bridge().restart(),
+  // 语义与实现对齐：这里是「校验运行时」，通道为 harness:verify（preload 方法同名）
+  harness_verify: () => bridge().verify(),
+  harness_clear_logs: () => bridge().clearLogs(),
+  harness_save_settings: (args) => bridge().saveSettings((args?.settings ?? {}) as Record<string, unknown>),
+  harness_open: (args) => bridge().open(args?.mode ?? 'window'),
+}
+
+// 返回值即 IPC 透传结果（不同通道结构不同），调用点按需读取字段；
+// 此处不逐通道建模，保持渲染层与主进程契约的松耦合。
+async function call(cmd: string, args?: CommandArgs): Promise<any> {
   const fn = COMMANDS[cmd]
   if (!fn) throw new Error(`未知命令：${cmd}`)
   return fn(args)
@@ -101,9 +123,9 @@ async function call(cmd, args) {
 
 /* ── 渲染 ──────────────────────────────────────────────────────── */
 
-// 与 electron/harness.cjs 的 setState 取值严格对齐
-// （scripts/check.mjs 会校验两处状态枚举一致性）
-const STATE_LABEL = {
+// 与 electron/harness.ts 的 setState 取值严格对齐
+// （scripts/check.ts 会校验两处状态枚举一致性）
+const STATE_LABEL: Record<string, string> = {
   notInstalled: '运行时缺失',
   stopped: '已就绪 · 未启动',
   starting: '正在启动…',
@@ -112,7 +134,7 @@ const STATE_LABEL = {
   error: '启动失败',
 }
 
-function render(snap) {
+function render(snap: ClawLiteSnapshot | null | undefined): void {
   if (!snap) return
   snapshot = snap
 
@@ -153,8 +175,8 @@ function render(snap) {
   el.infoHome.textContent = snap.dshHome || '—'
 
   // 设置（仅在未聚焦时回填，避免打断输入）
-  const s = snap.settings || {}
-  if (document.activeElement !== el.fPort) el.fPort.value = s.port ?? PORT_DEFAULT
+  const s = snap.settings || ({} as ClawLiteSettings)
+  if (document.activeElement !== el.fPort) el.fPort.value = String(s.port ?? PORT_DEFAULT)
   if (document.activeElement !== el.fWorkspace) el.fWorkspace.value = s.workspace || ''
   if (document.activeElement !== el.fDshHome) el.fDshHome.value = s.dshHome || ''
   // 与其它字段一致：聚焦时不回填，避免用户正按方向键选择打开方式时被覆盖
@@ -170,10 +192,10 @@ const LOG_DOM_LIMIT = 800
 
 // 日志写入合并到下一帧批量执行：dsh 启动期日志密集，逐行 appendChild +
 // 同步读 scrollHeight 会触发大量强制重排；合并后一帧只重排一次。
-let logQueue = []
+let logQueue: { text: string; kind: string | null }[] = []
 let logFrame = 0
 
-function flushLog() {
+function flushLog(): void {
   logFrame = 0
   if (!logQueue.length) return
   const frag = document.createDocumentFragment()
@@ -189,11 +211,11 @@ function flushLog() {
     logEmpty = false
   }
   el.log.appendChild(frag)
-  while (el.log.childNodes.length > LOG_DOM_LIMIT) el.log.removeChild(el.log.firstChild)
+  while (el.log.childNodes.length > LOG_DOM_LIMIT) el.log.removeChild(el.log.firstChild!)
   if (el.fAutoscroll.checked) el.log.scrollTop = el.log.scrollHeight
 }
 
-function logLine(text, kind) {
+function logLine(text: string, kind: string | null): void {
   logQueue.push({ text, kind })
   if (!logFrame) logFrame = requestAnimationFrame(flushLog)
 }
@@ -204,13 +226,13 @@ function logLine(text, kind) {
 const ERR_WORD_RE = /(?:^|[\s(\["'「:：])(?:error|fatal)\b/i
 const ERR_CJK_RE = /错误|失败/
 
-function classify(line) {
+function classify(line: string): string | null {
   if (line.startsWith('[claw-lite]')) return 'l-claw'
   if (ERR_WORD_RE.test(line) || ERR_CJK_RE.test(line)) return 'l-err'
   return null
 }
 
-function rebuildLog(lines) {
+function rebuildLog(lines: string[] | null | undefined): void {
   // 丢弃尚未刷入的队列并取消在帧任务，避免重建后又被旧行追加
   logQueue = []
   if (logFrame) {
@@ -229,16 +251,16 @@ function rebuildLog(lines) {
 
 /* ── 交互 ──────────────────────────────────────────────────────── */
 
-async function guard(fn, okMsg) {
+async function guard(fn: () => Promise<unknown>, okMsg?: string): Promise<void> {
   try {
     await fn()
     if (okMsg) toast(okMsg)
   } catch (e) {
-    toast(String(e?.message || e), true)
+    toast(errText(e), true)
   }
 }
 
-function bind() {
+function bind(): void {
   // 启动结果由 harness:state 快照驱动（探活期间可能被「停止」中止），
   // 故不在此提示「正在启动」，避免取消后仍弹启动提示
   el.btnStart.addEventListener('click', () => guard(() => call('harness_start')))
@@ -255,7 +277,7 @@ function bind() {
   el.btnInstall.addEventListener('click', () =>
     guard(async () => {
       const msg = await call('harness_verify')
-      toast(msg)
+      toast(String(msg))
     })
   )
   el.btnClearLog.addEventListener('click', () =>
@@ -277,7 +299,7 @@ function bind() {
 
   el.btnPickWs.addEventListener('click', () =>
     guard(async () => {
-      const picked = await api.pickDirectory()
+      const picked = await bridge().pickDirectory()
       if (typeof picked === 'string' && picked) el.fWorkspace.value = picked
     })
   )
@@ -322,18 +344,18 @@ function bind() {
 
 /* ── 自动更新 ──────────────────────────────────────────────────── */
 
-async function checkUpdate() {
-  if (!api) {
+async function checkUpdate(): Promise<void> {
+  if (!IS_DESKTOP) {
     toast('仅在桌面应用中支持检查更新', true)
     return
   }
   el.btnUpdate.disabled = true
   el.btnUpdate.textContent = '检查中…'
   try {
-    const res = await api.checkUpdate()
+    const res = await bridge().checkUpdate()
     toast(res?.message || '已检查更新', !res?.ok)
   } catch (e) {
-    toast(`更新检查失败：${e?.message || e}`, true)
+    toast(`更新检查失败：${errText(e)}`, true)
   } finally {
     el.btnUpdate.disabled = false
     el.btnUpdate.textContent = '检查更新'
@@ -342,9 +364,9 @@ async function checkUpdate() {
 
 /* ── 启动 ──────────────────────────────────────────────────────── */
 
-async function boot() {
+async function boot(): Promise<void> {
   // macOS 桌面端顶栏需为原生交通灯预留左侧安全区
-  // （与 main.cjs 的 trafficLightPosition 配套，样式见 main.css 的 --topbar-gutter）
+  // （与 main.ts 的 trafficLightPosition 配套，样式见 main.css 的 --topbar-gutter）
   if (IS_DESKTOP && /Mac/i.test(navigator.userAgent)) {
     document.body.classList.add('is-mac')
   }
@@ -369,14 +391,20 @@ async function boot() {
       dshHome: '',
       workspace: '',
       logs: [],
-      settings: { port: PORT_DEFAULT, autoStart: false, openMode: 'window', dshHome: '', workspace: '' },
+      settings: {
+        port: PORT_DEFAULT,
+        autoStart: false,
+        openMode: 'window',
+        dshHome: '',
+        workspace: '',
+      },
     })
     rebuildLog([])
     el.btnUpdate.classList.add('hidden')
     return
   }
 
-  api.onState((snap) => {
+  bridge().onState((snap) => {
     // 需重建整段日志的两种情况：首次渲染，或主进程日志缓冲已从头部截断
     // （缓冲区满后行数不再变化，只能靠首行变化识别，否则界面会残留过期行）
     const prevCount = snapshot?.logs?.length ?? -1
@@ -389,7 +417,7 @@ async function boot() {
     if (truncated) rebuildLog(snap.logs)
   })
 
-  api.onLog((line) => {
+  bridge().onLog((line) => {
     if (!line) {
       rebuildLog([])
       return
@@ -400,8 +428,8 @@ async function boot() {
   try {
     render(await call('harness_snapshot'))
   } catch (e) {
-    toast(`读取运行状态失败：${e?.message || e}`, true)
+    toast(`读取运行状态失败：${errText(e)}`, true)
   }
 }
 
-boot()
+void boot()

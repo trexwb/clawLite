@@ -1,3 +1,14 @@
+---
+AIGC:
+    Label: "1"
+    ContentProducer: 001191440300708461136T1XGW3
+    ProduceID: 75cf1e850e5668c557334a2fa39f707b_e70f26ddb87811f19ba1525400638852
+    ReservedCode1: 4Jkcyd90LxzOi00JESBqF0vrRFgWrwXvDT5QxIqCoVvIj4mSF76/LXoDTSXYAtQflkdGHwTDiBfn5w8dyn+yElfHMt2D18jhgSIDFuWFTCY+t9aoVjTlK7aN1oCpNaJUNKjGL3LXb2cfWPqVW7nSlm9nUt8Z4OqCDXveh4Y+ncufAHoj/4HOLDAU/kE=
+    ContentPropagator: 001191440300708461136T1XGW3
+    PropagateID: 75cf1e850e5668c557334a2fa39f707b_e70f26ddb87811f19ba1525400638852
+    ReservedCode2: 4Jkcyd90LxzOi00JESBqF0vrRFgWrwXvDT5QxIqCoVvIj4mSF76/LXoDTSXYAtQflkdGHwTDiBfn5w8dyn+yElfHMt2D18jhgSIDFuWFTCY+t9aoVjTlK7aN1oCpNaJUNKjGL3LXb2cfWPqVW7nSlm9nUt8Z4OqCDXveh4Y+ncufAHoj/4HOLDAU/kE=
+---
+
 # 版本迭代日志
 
 > 本目录专门存储 Claw Lite 每次升级迭代的发布日志。
@@ -9,7 +20,7 @@
 > - **绝对禁止推进版本号的场景**：同一问题多轮往返跟进、同日同模块追加修复、用户明确要求不改版本号、仅文档更新、纯 CSS/文案/去抖体验打磨
 > - 要求版本回退时，`package.json` 的 `version` 必须同时回退到用户指定值
 > - **即使不推进版本号，也必须追加发布日志**：对应主版本文件顶部新分节，注明日期与"不推进版本号"；历史日志只增不改
-> - **独立维度**：内置 DSH 运行时版本由 `scripts/fetch-runtime.mjs` 的 `DSH_VERSION` 决定，与应用版本相互独立
+> - **独立维度**：内置 DSH 运行时版本由 `scripts/fetch-runtime.ts` 的 `DSH_VERSION` 决定，与应用版本相互独立
 
 ---
 
@@ -28,3 +39,4 @@
 - **发布后**：分节状态标记 ✅ 已发布；`version` 目录内已发布内容只增不改（历史日志不可篡改）
 - 待发布内容先以 📝 待发布 状态记录，发布时更新状态与日期
 - **去重整理**：同类问题多次修复的条目合并为一条，统一记述于最终修复版本；被合并的早期版本分节保留编号与合并指向（不删版本号、不重复正文）
+*（内容由AI生成，仅供参考）*
