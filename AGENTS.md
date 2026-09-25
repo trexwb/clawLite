@@ -1,14 +1,3 @@
----
-AIGC:
-    Label: "1"
-    ContentProducer: 001191440300708461136T1XGW3
-    ProduceID: 75cf1e850e5668c557334a2fa39f707b_e56ea75eb87811f1b40252540024e231
-    ReservedCode1: sOpUMVje/ibCr4TxQ+fKlM5qEKnz8IclPIBUtRZ2L/VSvGash9YLNYB1449/HWDZf3SJLrVD6mJUdR0eyRiQgE9Xt1whSTiWpVGIPXwcFGHhlZ/mV3Lt5/nMbwAqBuWyHqHbdsMXeaatHnDwUcWFoF75ZdAv93nmpzvSYXu9QI0tuP84zW5+vXmaOU8=
-    ContentPropagator: 001191440300708461136T1XGW3
-    PropagateID: 75cf1e850e5668c557334a2fa39f707b_e56ea75eb87811f1b40252540024e231
-    ReservedCode2: sOpUMVje/ibCr4TxQ+fKlM5qEKnz8IclPIBUtRZ2L/VSvGash9YLNYB1449/HWDZf3SJLrVD6mJUdR0eyRiQgE9Xt1whSTiWpVGIPXwcFGHhlZ/mV3Lt5/nMbwAqBuWyHqHbdsMXeaatHnDwUcWFoF75ZdAv93nmpzvSYXu9QI0tuP84zW5+vXmaOU8=
----
-
 # AGENTS.md — Claw Lite（DeepSeek Harness 桌面宿主）
 
 ## ⚠ 强制规范（所有 Agent 必须遵守）
@@ -42,17 +31,14 @@ Claw Lite 是 DeepSeek Harness（dsh）的桌面宿主：内置 Electron 自带 
 >   - `electron-builder.yml` 通过 `artifactName` 中的 `${version}` 引用（产物名 `Claw-Lite-${version}-${arch}.${ext}`）。
 >   - 自动更新（`electron/main.ts` 的 `checkForUpdates`）与 `app:info` 均通过 `app.getVersion()` 读取此值。
 >   - 本项目**无 Tauri / 无独立版本清单**，因此**唯一需要修改的版本位置就是 `package.json` 的 `version` 字段**（外加本文件「当前基准版本」便于人类核对）。
-> - **当前基准版本**：**v1.0.0**（用户设定；未发布前不递增）。
-> - **末位 +1 的唯一场景**：仅当新增了与现有问题**不同类、不同根因**的新功能 / 新修复，且用户明确允许推进版本号时，才将末位（x）加 1。
-> - **🟥 以下情形绝对禁止推进版本号（写死不 +1）**：
->   1. 上一轮同一用户反馈的问题 / 同类问题**持续修复、多次往返排查、再次验证修复**
->   2. 用户明确要求「不修改版本号 / 版本号回退到 X.Y.Z」
->   3. 同日（自然日 00:00–23:59 本地时区）对同一模块 / 同一类 bug 的追加修复
->   4. 仅更新 `docs/`（发布日志、截图、操作手册等文档类修改）
->   5. 纯 CSS 微调 / 文案修正 / 去抖防抖等纯体验打磨，不引入新逻辑分支
-> - **版本回退规则**：当用户要求"回退到 X.Y.Z"时，`package.json` 的 `version` 必须改写成用户指定的值，且本回合内不得再以"我刚才做了修改所以要 +1"为由推进。
-> - **不推进版本号时仍必须写更新日志**：每次修复追加到 `docs/version/RELEASE-v{主版本}.md` 对应分节，标注日期并明确"不推进版本号"。发布日志只增不改。
-> - **独立维度**：内置 DSH 运行时版本由 `scripts/fetch-runtime.ts` 的 `DSH_VERSION` 常量决定，与应用版本（package.json）相互独立，升级需重跑 `npm run runtime:force`。
+> - **当前基准版本**：**v1.0.1**（**已正式发布**；此后按正常语义化版本迭代）。
+> - **发布后按语义化版本（SemVer）正常迭代**：每次迭代按改动性质推进对应位，不再需要「用户明确允许」作为前置条件。
+>   - **主版本（X.0.0）**：不向后兼容的破坏性变更。
+>   - **次版本（x.Y.0）**：向后兼容的新功能 / 新能力。
+>   - **修订号（x.y.Z）**：向后兼容的问题修复、体验打磨、文档 / 样式等非功能性改动（含同日同模块追加修复、仅更新 `docs/`、纯 CSS 微调 / 文案修正等）。
+> - **每次迭代都必须递增版本号并写更新日志**：在 `docs/version/RELEASE-v{主版本}.md` 顶部追加分节，标注日期与版本号。发布日志只增不改。
+> - **版本回退 / 指定版本规则**：当用户要求"回退到 X.Y.Z"或"本次不改版本号"时，以用户指令为准——`package.json` 的 `version` 必须改写成用户指定的值，且本回合内不得再以"我刚才做了修改所以要 +1"为由推进；不改版本号时日志注明"不推进版本号"。
+> - **独立维度**：内置 DSH 运行时版本由 `scripts/fetch-runtime.ts` 的 `DSH_VERSION` 常量决定，与应用版本（package.json）相互独立，升级需重跑 `npm run runtime:force`。**内置 DSH 依赖树自身的 `package.json` 的 `version` 字段（`resources/dsh/app/package.json` 与 `resources/dsh/app/node_modules/@deepseek-ai/dsh/package.json`）不属于应用版本，不得随应用版本号改动。**
 
 ### 1. 构建与运行原则（Electron 宿主，最高优先级）
 
@@ -77,7 +63,7 @@ Claw Lite 是 DeepSeek Harness（dsh）的桌面宿主：内置 Electron 自带 
 - **编辑后必须验证**：必须 grep/read 验证关键改动是否落盘
 - **分区编辑**：每次 edit 只替换一个独立区块（如单个函数、CSS 块、IPC 分支），避免多区块一次替换引发意外匹配
 - **禁止假设**：不可凭记忆推测已有函数名、变量名、CSS 类名、IPC 通道名，修改前必须读取确认
-- **版本号规则**：编辑 `src/` 或 `electron/` 模块后，按 §0 规则判断是否递增 `package.json` 末位（用户明确允许才 +1）
+- **版本号规则**：编辑 `src/` 或 `electron/` 模块后，按 §0 的语义化版本规则递增 `package.json` 对应位（修复 / 文档 / 样式类 → 修订号，向后兼容新功能 → 次版本，破坏性变更 → 主版本）
 - **IPC 契约三层对齐**：新增/修改任何主进程能力时，必须同步更新三处——① `electron/main.ts` 的 `ipcMain.handle('channel', …)`；② `electron/preload.ts` 暴露的方法或事件订阅；③ `src/main.ts` 的 `api.*` 调用或 `COMMANDS` 映射。`scripts/check.ts` 会自动校验三层对齐
 
 ### 4. 架构约定
@@ -199,7 +185,7 @@ dsh 子进程 stdout → attachPipes → log(line) → _captureUrl(line) 匹配
 - 偏好针对性局部修复，拒绝重构
 - 涉及文件改动时默认直接动手，无需先征求确认
 - **修复完成后不要主动执行 git commit**，由用户自行验证后再提交
-- 版本号以用户手动操作为准（曾手动回退过版本号），Agent 递增版本号时以 `package.json` 当前值为基准、且需用户明确允许
+- 版本号以 `package.json` 当前值为基准，按 §0 的语义化版本规则递增对应位；用户要求回退或指定版本号时以用户指令为准
 - **改动后必须运行 `npm run check` 验证**（JSON / 文件 / 语法 / IPC 三层对齐 / 无 Tauri 残留）
 
 ### 11. 编码规范
@@ -289,4 +275,3 @@ dsh 子进程 stdout → attachPipes → log(line) → _captureUrl(line) 匹配
 - **产物校验**：`npm run verify:dist`（需先 `npm run build:web`）断言 `dist/index.html` 资源引用为相对路径、品牌图标真实产出并被引用——静态自检看不到 Vite 产物。
 - **CI 流水线**：`.github/workflows/release.yml` 在推送 `v*` tag（或手动触发）后，于 macOS / Windows runner 执行 `npm ci → npm run runtime → npm run check → npm run build:web → npm run verify:dist → electron-builder`，产物汇总后由 `publish` job 创建 GitHub Release。
 - **打包**：`npm run dist:mac` / `dist:win` / `dist:linux` / `dist`，产物输出 `release/`。macOS 本地打包默认不签名（`CSC_IDENTITY_AUTO_DISCOVERY=false`），正式分发需具备证书的机器签名/公证。
-*（内容由AI生成，仅供参考）*

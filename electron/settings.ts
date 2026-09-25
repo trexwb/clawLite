@@ -4,6 +4,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { PORT_DEFAULT } from '../src/shared/constants.ts'
 
 export interface WindowBounds {
   x: number
@@ -18,6 +19,8 @@ export interface Settings {
   openMode: 'window' | 'browser'
   workspace: string
   dshHome: string
+  /** DSH 版本策略：'latest' 或具体版本号（如 0.1.7-rc.2）；空串按 latest 处理 */
+  dshVersion: string
   windowBounds: WindowBounds | null
 }
 
@@ -27,11 +30,12 @@ export interface SaveResult {
 }
 
 export const DEFAULTS: Settings = {
-  port: 8799,
+  port: PORT_DEFAULT,
   autoStart: false,
   openMode: 'window', // window | browser
   workspace: '',
   dshHome: '',
+  dshVersion: 'latest', // latest | x.y.z
   windowBounds: null,
 }
 

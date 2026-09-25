@@ -17,6 +17,7 @@ files:
 # DSH 依赖树随包分发（约 280MB），置于 Resources/dsh，
 # 不打进 asar：内含原生模块（.node）需以真实文件形式存在。
 # 排除 node/node.exe —— Electron 自带 Node 运行时，无需外挂解释器。
+# 同时作为「离线兜底」：运行时若无法联网拉取最新版，回退至此内置版本。
 extraResources:
   - from: resources/dsh
     to: dsh
@@ -24,6 +25,12 @@ extraResources:
       - "**/*"
       - "!node"
       - "!node.exe"
+  # npm 随包内置（resourcesPath/npm），供运行时在 userData 拉取/安装指定 DSH 版本，
+  # 不依赖用户系统装有 npm / Node。version-fetch.ts 的 resolveNpmCli 优先取此处。
+  - from: node_modules/npm
+    to: npm
+    filter:
+      - "**/*"
 
 asar: true
 compression: maximum

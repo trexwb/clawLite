@@ -6,10 +6,39 @@
 
 ---
 
-## v1.0.0 — 初始基线（📝 待发布）
+## v1.0.1 — 正式发布后切换至语义化版本迭代（2026-09-25 · ✅ 已发布）
+
+- **日期**：2026-09-25
+- **状态**：✅ 已发布
+- **版本号**：`package.json` 由 `1.0.0` → `1.0.1`（项目正式发布后的首个修订号迭代）
+- **范围**：版本纪律由「发布前冻结、末位 +1 需用户明确允许」切换为「正式发布后按语义化版本正常迭代」，并同步更新全部相关文档
+
+### 本期内容
+
+- **应用版本号推进**：`package.json` 的 `version` 提升至 `1.0.1`。版本号单一来源不变——`electron-builder.yml` 的产物名 `${version}`、`app.getVersion()` 与 `app:info` 均读此值，故打包产物名相应变为 `Claw-Lite-1.0.1-<arch>.dmg` / `Claw-Lite-Setup-1.0.1.exe`。
+- **`AGENTS.md` §0 版本纪律改写**：基准版本更新为 **v1.0.1（已正式发布）**；原「末位 +1 的唯一场景 + 写死不 +1 的禁止清单」替换为按语义化版本（SemVer）正常迭代——主版本对应不向后兼容的破坏性变更、次版本对应向后兼容的新功能、修订号对应向后兼容的修复与文档 / 样式等非功能性改动；保留并强化四条不变式：版本号单一来源、每次迭代必须写发布日志（只增不改）、用户要求回退 / 指定版本号时以用户指令为准、DSH 运行时版本为独立维度；新增「内置 DSH 依赖树自身的 `package.json` 的 `version` 不属于应用版本，不得随应用版本号改动」。同步修正 §3「编辑策略」与 §10「用户偏好」中引用旧规则的表述。
+- **`docs/version/README.md`**：版本纪律段与日志索引表同步为发布后口径（当前基准 v1.0.1，v1.0 日志状态 ✅ 已发布），「约定」段由「发布前 / 发布后」改为「每次迭代 / 发布后」。
+- **`docs/version/RELEASE-v1.0.md`**：本分节按只增不改原则追加于文件顶部；v1.0.0 分节的状态标记由 📝 待发布 更新为 ✅ 已发布（2026-09-25 正式发布），正文内容未改动。
+- **`docs/wiki/` 与 `docs/case/`**：`自检与发布流程` §六「版本纪律与发布日志」、`常见问题`「改了代码要写发布日志吗」、`案例-用-dsh-开发-Claw-Lite` §七与 `CASE-dsh-clawlite.md` §7 的版本纪律表述同步为发布后语义化版本口径，并保留对发布前 v1.0.0 基线阶段更严口径的历史说明。
+
+### 未改动项（明确区分，避免误改）
+
+- **内置 DSH 依赖树自身的 `package.json` 的 `version`**：`resources/dsh/app/package.json`（`1.0.0`）与 `resources/dsh/app/node_modules/@deepseek-ai/dsh/package.json` 均保持原值；`scripts/fetch-runtime.ts`、`electron/version-download.ts` 中生成依赖树清单时写入的 `version: '1.0.0'` 同属依赖树维度，亦未改动。
+- **内置 DSH 运行时版本**：`scripts/fetch-runtime.ts` 的 `DSH_VERSION` 维持 `0.1.5-rc.3`（`resources/dsh/runtime.json` 记录一致），不随应用版本变动。
+- **源码逻辑、构建配置与 CI**：`electron/`、`src/`、`scripts/` 的业务逻辑，`electron-builder.yml`、`.github/workflows/release.yml` 均未改动；`README.md` 不含硬编码应用版本号，无需同步。
+
+### 验证
+
+- `npm run build`（`build:electron` + `build:web`）成功：`dist-electron/main.js`（ESM）、`dist-electron/preload.js`（CJS）、`dist/` 渲染层产物均正常生成。
+- `npm run check` **全部通过 ✔**（JSON / 关键文件 / 源码后缀门禁 / `tsc --noEmit` 类型检查 / IPC 三层对齐 / 状态枚举双向可达 / 日志着色类名与 CSS 交叉 / 端口范围一致 / 安全与无障碍基线 / 产物模块形态 / 下载阶段枚举双向可达，无失败无告警）。
+- `npm run verify:dist` 产物校验通过 ✔（`dist/index.html` 资源引用为相对路径、品牌图标已产出并被引用）。
+
+---
+
+## v1.0.0 — 初始基线（✅ 已发布）
 
 - **日期**：2026-09-24
-- **状态**：📝 待发布（未发布前不推进版本号）
+- **状态**：✅ 已发布（2026-09-25 正式发布；正文按只增不改原则未作改动）
 - **版本号**：`package.json` 已对齐至 `1.0.0`（由早期 `0.1.0` 同步）
 - **范围**：首个文档化基线，确立 `AGENTS.md` 强制规范与版本纪律
 
@@ -30,7 +59,24 @@
 
 - macOS 包默认不签名 / 未公证，首次打开需右键「打开」绕过 Gatekeeper；仍被拦截可在终端执行 `xattr -dr com.apple.quarantine "/Applications/clawLite.app"`（路径按实际包名调整）解除隔离标记
 - 依赖树约 300MB，安装包体积较大（压缩后 dmg 约 150MB）
-- 内置 DSH 版本由 `scripts/fetch-runtime.mjs` 的 `DSH_VERSION`（当前 `0.1.5-rc.3`）决定，升级需重跑 `npm run runtime:force`
+- 内置 DSH 版本由 `scripts/fetch-runtime.ts` 的 `DSH_VERSION`（当前 `0.1.5-rc.3`）决定，升级需重跑 `npm run runtime:force`。**当前 Electron 版本与 DSH v0.1.7 存在兼容冲突，建议维持 `0.1.5-rc.3` 作为内置运行时**；待后续 Electron 升级迭代支持 v0.1.7-rc.2 后再切换
+
+### 实践案例文档与 GitHub Wiki 文件集（2026-09-25 · 不推进版本号）
+
+- **背景**：项目此前只有 `README.md`（功能与操作）与 `docs/version/`（版本迭代日志），缺少「怎么用 dsh 把本项目做出来」的经验记录，也没有面向 GitHub Wiki 的发布物料。
+- **新增 `docs/case/`（实践案例）**：`CASE-dsh-clawlite.md` 为主案例——开发侧（dsh 会话即开发入口、`AGENTS.md` 作为规范基线、每轮产出必须过门禁）、产物侧（主控制面板 → `HarnessManager` 托管链路与界面元素源码出处对照）、一轮会话的完整路径、六条踩坑记录（`--expose-internals`、token 必须整条捕获、preload 只能 CJS、dsh 0.1.7 兼容冲突、约 300MB 依赖树不进 asar、EventEmitter 异步 `error` 击穿主进程）、三层门禁与版本纪律；同目录 `README.md` 为案例索引，并说明截图素材与 wiki 发布方式。
+- **新增 `docs/wiki/`（可直接发布的 GitHub wiki 文件集）**：`Home.md`、`_Sidebar.md`、`_Footer.md` 与内容页（案例、快速开始、架构总览、DSH 版本管理与热切换、自检与发布流程、常见问题），页面之间以 `[[页面名]]` 互链，页面名与文件名严格一致。
+- **截图引用**：案例文档引用 `docs/images/0.png`（主控制面板）与 `docs/images/1.png`（dsh web 新会话界面）；wiki 侧图片随包复制到 `docs/wiki/images/`（wiki 与主仓库是两个独立 git 仓库，图片不随包提交会 404）。两处一律使用仓库内相对路径，不写绝对路径、不使用外链。
+- **未改动**：源码、构建脚本、`package.json`、CI 与 `docs/images/` 原图均未变动。
+- 版本号维持 **v1.0.0**（仅文档更新，按 §0 不推进版本号）。
+
+### DSH 运行时版本兼容性说明（2026-09-25 · 不推进版本号）
+
+- **背景**：DSH v0.1.7 系列（含 v0.1.7-rc.2）引入了对更新版 Node / Electron 运行时的依赖，与当前项目锁定的 Electron 版本存在兼容冲突——直接使用 v0.1.7 作为内置运行时会启动失败或运行异常。
+- **当前建议**：内置 DSH 运行时维持 **v0.1.5-rc.3**（`scripts/fetch-runtime.ts` 的 `DSH_VERSION` 默认值），该版本与当前 Electron 完全兼容，已在本项目多轮审计中验证稳定。
+- **后续升级路径**：待 Electron 升级迭代并确认支持 v0.1.7-rc.2 后，将 `DSH_VERSION` 切换至 `0.1.7-rc.2` 并重跑 `npm run runtime:force` 刷新内置运行时。届时同步更新本说明与 `scripts/fetch-runtime.ts` 的默认值。
+- **用户影响**：通过安装包分发的终端用户无需任何操作，安装包内已预置兼容的 v0.1.5-rc.3 运行时。开发者本地刷新运行时（`npm run runtime:force`）时请勿手动指定 v0.1.7 系列版本。
+- 版本号维持 **v1.0.0**（纯文档说明，无代码变更，按 §0 不推进版本号）。
 
 ### 待发布优化（2026-09-24 · 不推进版本号）
 

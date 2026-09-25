@@ -33,6 +33,12 @@ contextBridge.exposeInMainWorld('clawLite', {
   restart: () => ipcRenderer.invoke('harness:restart'),
   verify: () => ipcRenderer.invoke('harness:verify'),
   clearLogs: () => ipcRenderer.invoke('harness:clearLogs'),
+  listVersions: () => ipcRenderer.invoke('harness:listVersions'),
+  pruneVersions: (keep: string[]) => ipcRenderer.invoke('harness:pruneVersions', keep),
+  prepareVersion: (policy: string) => ipcRenderer.invoke('harness:prepareVersion', policy),
+  applyVersion: (policy: string, start = true) =>
+    ipcRenderer.invoke('harness:applyVersion', policy, start),
+  cancelVersion: () => ipcRenderer.invoke('harness:cancelVersion'),
   saveSettings: (settings: unknown) => ipcRenderer.invoke('harness:saveSettings', settings),
   open: (mode: string) => ipcRenderer.invoke('harness:open', mode),
   pickDirectory: () => ipcRenderer.invoke('dialog:pickDirectory'),
@@ -43,4 +49,5 @@ contextBridge.exposeInMainWorld('clawLite', {
   /* 事件订阅 */
   onState: (handler: (snap: unknown) => void) => on('harness:state', handler),
   onLog: (handler: (line: string) => void) => on('harness:log', handler),
+  onVersionProgress: (handler: (job: unknown) => void) => on('harness:versionProgress', handler),
 })

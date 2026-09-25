@@ -102,7 +102,7 @@
             <div class="form">
               <label class="field">
                 <span class="field-label">监听端口</span>
-                <input id="f-port" type="number" min="1024" max="65535" step="1" />
+                <input id="f-port" type="number" inputmode="numeric" min="1024" max="65535" step="1" />
               </label>
 
               <label class="field">
@@ -131,6 +131,49 @@
                   autocomplete="off"
                 />
               </label>
+
+              <label class="field">
+                <span class="field-label">DSH 版本</span>
+                <span class="row">
+                  <input
+                    id="f-dsh-version"
+                    type="text"
+                    placeholder="latest 或具体版本号，如 0.1.7-rc.2"
+                    spellcheck="false"
+                    autocomplete="off"
+                  />
+                  <button id="btn-toggle-version-list" type="button" class="btn btn-sm" aria-label="选择版本">▼</button>
+                  <button id="btn-refresh-versions" type="button" class="btn btn-sm">刷新列表</button>
+                </span>
+                <!-- 版本号下拉面板：始终显示全量列表，不受输入框内容过滤 -->
+                <div id="version-dropdown" class="version-dropdown hidden">
+                  <ul id="version-dropdown-list" role="listbox" aria-label="可用 DSH 版本"></ul>
+                </div>
+                </span>
+                <span id="dsh-version-hint" class="field-hint">
+                  当前运行的版本；选定版本后立即从 npm 下载，下载完成即可直接切换启动，无需重启应用
+                </span>
+              </label>
+
+              <!-- 版本下载进度：选定版本即出现，下载完成后就地提供「切换并启动」 -->
+              <div id="version-download" class="dl hidden" aria-live="polite">
+                <div class="dl-head">
+                  <span id="dl-title" class="dl-title">正在下载 DSH 运行时…</span>
+                  <span id="dl-pct" class="dl-pct">0%</span>
+                </div>
+                <div id="dl-bar" class="dl-bar">
+                  <div id="dl-fill" class="dl-fill"></div>
+                </div>
+                <div class="dl-foot">
+                  <span id="dl-msg" class="dl-msg"></span>
+                  <span class="dl-actions">
+                    <button id="btn-apply-version" type="button" class="btn primary btn-sm" disabled>
+                      切换并启动
+                    </button>
+                    <button id="btn-cancel-download" type="button" class="btn btn-sm">取消下载</button>
+                  </span>
+                </div>
+              </div>
 
               <label class="check">
                 <input id="f-auto" type="checkbox" />

@@ -15,6 +15,7 @@
      9. 端口范围三方一致（index.html ↔ harness.ts ↔ 渲染层）
     10. 安全与无障碍基线硬断言（webPreferences / CSP / 播报区唯一）
     11. 构建产物模块形态（dist-electron/main.js 必须 ESM、preload.js 必须 CJS）
+    12. 下载阶段枚举双向可达（DOWNLOAD_PHASES ↔ 渲染层 PHASE_LABEL）
 
    源码为 .ts（node 原生类型擦除直跑），产物为 .js；本脚本自身即 .ts。
    ═══════════════════════════════════════════════════════════════════ */
@@ -57,6 +58,7 @@ const REQUIRED = [
   'electron/preload.ts',
   'electron/harness.ts',
   'electron/settings.ts',
+  'src/shared/constants.ts',
   'scripts/build-electron.ts',
   'scripts/check.ts',
   'scripts/verify-dist.ts',
@@ -249,29 +251,39 @@ ok(
 )
 
 /* ── 9) 端口范围三方一致 ───────────────────────────────────────── */
-// 输入框约束、主进程 IPC 校验、harness 分配策略必须同源，否则会出现
+// 端口常量已抽至 src/shared/constants.ts（单一来源），主进程与渲染层均从此导入；
+// 此处校验「共享常量 ↔ index.html 输入框约束」两方一致即可，杜绝
 // 「输入框拦住 / 主进程放行 / 渲染层静默改写」三条互不一致的路径。
+const sharedSrc = readFileSync(join(root, 'src/shared/constants.ts'), 'utf8')
 const htmlSrc = readFileSync(join(root, 'index.html'), 'utf8')
 const htmlPort = htmlSrc.match(/id="f-port"[^>]*min="(\d+)"[^>]*max="(\d+)"/)
-const tsPort = harnessSrc.match(/const PORT_MIN\s*=\s*(\d+)[\s\S]*?const PORT_MAX\s*=\s*(\d+)/)
-const tsDefault = harnessSrc.match(/const PORT_DEFAULT\s*=\s*(\d+)/)
-const rendererPorts = [...rendererSrc.matchAll(/const PORT_(MIN|MAX|DEFAULT)\s*=\s*(\d+)/g)].reduce(
-  (acc, m) => ({ ...acc, [m[1]]: m[2] }),
-  {} as Record<string, string>
+const cMin = sharedSrc.match(/export const PORT_MIN\s*=\s*(\d+)/)
+const cMax = sharedSrc.match(/export const PORT_MAX\s*=\s*(\d+)/)
+const cDef = sharedSrc.match(/export const PORT_DEFAULT\s*=\s*(\d+)/)
+ok(
+  '端口范围一致（index.html ↔ src/shared/constants.ts PORT_MIN/MAX）',
+  !!htmlPort &&
+    !!cMin &&
+    !!cMax &&
+    htmlPort[1] === cMin[1] &&
+    htmlPort[2] === cMax[1],
+  htmlPort && cMin && cMax ? `${htmlPort[1]}-${htmlPort[2]} / 常量 ${cMin[1]}-${cMax[1]}` : '未匹配'
 )
 ok(
-  '端口范围一致（index.html ↔ harness.ts PORT_MIN/MAX）',
-  !!htmlPort && !!tsPort && htmlPort[1] === tsPort[1] && htmlPort[2] === tsPort[2],
-  htmlPort && tsPort ? `${htmlPort[1]}-${htmlPort[2]}` : '未匹配到端口声明'
+  'PORT_DEFAULT 落在 [PORT_MIN, PORT_MAX] 区间内',
+  !!cMin &&
+    !!cMax &&
+    !!cDef &&
+    Number(cDef[1]) >= Number(cMin[1]) &&
+    Number(cDef[1]) <= Number(cMax[1]),
+  cDef ? `默认 ${cDef[1]}` : '未匹配'
 )
+// 共享常量文件不得引入 Node 内置模块：渲染层由 Vite 以 browser 上下文打包，
+// 若此处出现 `node:*` 导入，浏览器包会尝试解析 Node API 而构建失败。
 ok(
-  '渲染层端口常量与 harness.ts 同源（PORT_MIN/MAX/DEFAULT）',
-  !!tsPort &&
-    !!tsDefault &&
-    rendererPorts.MIN === tsPort[1] &&
-    rendererPorts.MAX === tsPort[2] &&
-    rendererPorts.DEFAULT === tsDefault[1],
-  `${rendererPorts.MIN ?? '?'}-${rendererPorts.MAX ?? '?'} · 默认 ${rendererPorts.DEFAULT ?? '?'}`
+  'src/shared/constants.ts 无 Node 内置模块导入（纯常量，可安全被渲染层导入）',
+  !/from\s+['"]node:/.test(sharedSrc),
+  /from\s+['"]node:/.test(sharedSrc) ? '发现 node: 导入' : 'clean'
 )
 
 /* ── 10) 安全与无障碍基线硬断言 ───────────────────────────────── */
@@ -309,6 +321,23 @@ ok(
   (pillTag ? pillTag[0] : '').trim()
 )
 ok('日志区不做 live 播报（高频追加不打断读屏）', /id="log"[^>]*aria-live="off"/.test(htmlSrc))
+// §11.3 禁用 !important，唯一例外是 @media (prefers-reduced-motion) 内的覆盖。
+// 算法：先剥除 CSS 注释（避免注释中提及该术语导致误报），再挖掉
+// prefers-reduced-motion 块，最后在剩余文本里搜 !important。
+const cssNoComments = cssSrc.replace(/\/\*[\s\S]*?\*\//g, '')
+const cssWithoutReducedMotion = cssNoComments.replace(
+  /@media\s*\(prefers-reduced-motion[^)]*\)\s*\{[\s\S]*?\n\}/g,
+  ''
+)
+const importantLines = cssWithoutReducedMotion
+  .split('\n')
+  .map((l, i) => (l.includes('!important') ? i + 1 : -1))
+  .filter((n) => n >= 0)
+ok(
+  'CSS 无 !important（prefers-reduced-motion 块内例外）',
+  !importantLines.length,
+  importantLines.length ? `第 ${importantLines.join(', ')} 行` : 'clean'
+)
 
 /* ── 11) 构建产物模块形态 ─────────────────────────────────────── */
 // 迁移路线的核心不变量：主进程产物必须是 ESM（纯 ESM 主进程），
@@ -332,6 +361,32 @@ if (existsSync(distMain) && existsSync(distPreload)) {
 } else {
   warn('构建产物模块形态检查已跳过', '先执行 npm run build:electron 生成 dist-electron/')
 }
+
+/* ── 12) 下载阶段枚举双向可达 ─────────────────────────────────── */
+// 与 §7 同一思路：进度面板按 phase 选文案，若主进程新增阶段而渲染层漏配，
+// 界面会退化成显示英文原值（如 "verifying"）；反之渲染层多写的键则是死代码。
+// 两侧都断言，避免新增阶段时静默漏改。
+const downloadSrc = readFileSync(join(root, 'electron/version-download.ts'), 'utf8')
+const phasesBlock = downloadSrc.match(/DOWNLOAD_PHASES\s*=\s*\[([\s\S]*?)\]/)
+const phases = [
+  ...new Set([...(phasesBlock ? phasesBlock[1] : '').matchAll(/'([a-z]+)'/g)].map((m) => m[1])),
+]
+const phaseLabelBlock = rendererSrc.match(/const PHASE_LABEL\s*[^=]*=\s*\{([\s\S]*?)\n\}/)
+const phaseLabelKeys = [
+  ...new Set([...(phaseLabelBlock ? phaseLabelBlock[1] : '').matchAll(/(\w+)\s*:/g)].map((m) => m[1])),
+]
+const missingPhaseLabels = phases.filter((p) => !phaseLabelKeys.includes(p))
+ok(
+  '下载阶段正向对齐（DOWNLOAD_PHASES ⊆ 渲染层 PHASE_LABEL）',
+  phases.length > 0 && !missingPhaseLabels.length,
+  missingPhaseLabels.join(',') || `${phases.length} 个阶段`
+)
+const deadPhaseLabels = phaseLabelKeys.filter((p) => !phases.includes(p))
+ok(
+  '下载阶段无死枚举（渲染层 PHASE_LABEL ⊆ DOWNLOAD_PHASES）',
+  phaseLabelKeys.length > 0 && !deadPhaseLabels.length,
+  deadPhaseLabels.join(',') || '全部可达'
+)
 
 console.log(
   fails === 0 ? `\n全部通过 ✔${warns ? `（${warns} 项告警）` : ''}` : `\n${fails} 项失败 ✘`
