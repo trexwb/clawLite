@@ -50,4 +50,5 @@ contextBridge.exposeInMainWorld('clawLite', {
   onState: (handler: (snap: unknown) => void) => on('harness:state', handler),
   onLog: (handler: (line: string) => void) => on('harness:log', handler),
   onVersionProgress: (handler: (job: unknown) => void) => on('harness:versionProgress', handler),
+  onUpdateDownloaded: (handler: (info: unknown) => void) => on('updater:downloaded', handler),
 })

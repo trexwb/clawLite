@@ -1,11 +1,14 @@
 {
   "name": "claw-lite",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "description": "Claw Lite — DeepSeek Harness 桌面宿主（Electron，内置 DSH 运行时，用户免装 Node）",
   "author": "trexwb",
   "license": "MIT",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",

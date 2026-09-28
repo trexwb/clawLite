@@ -30,8 +30,8 @@ rmSync(OUT_DIR, { recursive: true, force: true })
 const base: BuildOptions = {
   bundle: true,
   platform: 'node',
-  // 与 Electron 44 内置 Node（22.x）对齐，不向下兼容已废弃语法
-  target: 'node22',
+  // 与 Electron 44 内置 Node（24.x，实测 24.21.0）对齐，不向下兼容已废弃语法
+  target: 'node24',
   logLevel: 'info',
   minify: false,
   sourcemap: false,
