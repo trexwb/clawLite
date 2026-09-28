@@ -38,6 +38,10 @@
           </div>
         </div>
         <div class="topbar-right">
+          <!-- 更新包下载完成后才由渲染层解除隐藏（updater:downloaded → 立即重启并安装） -->
+          <button id="btn-install-update" type="button" class="btn primary btn-sm hidden">
+            立即重启并安装
+          </button>
           <button id="btn-update" type="button" class="btn btn-ghost btn-sm">检查更新</button>
           <!-- 状态胶囊不参与读屏播报：状态主卡（#hero-text）是唯一 live region，
                两处同时设 role="status" 会让同一次状态变化被播报两遍 -->
@@ -144,6 +148,7 @@
                   />
                   <button id="btn-toggle-version-list" type="button" class="btn btn-sm" aria-label="选择版本">▼</button>
                   <button id="btn-refresh-versions" type="button" class="btn btn-sm">刷新列表</button>
+                  <button id="btn-prune-versions" type="button" class="btn btn-sm">清理未使用版本</button>
                 </span>
                 <!-- 版本号下拉面板：始终显示全量列表，不受输入框内容过滤 -->
                 <div id="version-dropdown" class="version-dropdown hidden">
@@ -207,6 +212,7 @@
 
       <footer id="foot">
         <span>Claw Lite · Electron + 内置 DSH 运行时，用户无需安装 Node 环境</span>
+        <span id="foot-app"></span>
         <span id="foot-version"></span>
       </footer>
     </div>

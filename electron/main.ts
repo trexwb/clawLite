@@ -157,6 +157,15 @@ function createMainWindow(): BrowserWindow {
     if (/^https?:/i.test(url)) shell.openExternal(url)
   })
 
+  // 渲染进程崩溃（OOM / 原生模块段错误等）后窗口只剩空白，Electron 不会自愈。
+  // 先写运行日志留痕（重载后渲染层会用它回填历史，用户能直接看到原因），
+  // 再 reload 重建渲染层——本应用界面对主进程状态零持有，重载即恢复。
+  win.webContents.on('render-process-gone', (_event, details) => {
+    harness.log(`[claw-lite] ⚠ 界面渲染进程异常退出（${details.reason}），正在重新加载界面`)
+    if (win.isDestroyed()) return
+    win.webContents.reload()
+  })
+
   return win
 }
 
@@ -282,6 +291,15 @@ async function getUpdater(): Promise<AppUpdater | null> {
     autoUpdater.on('error', (err: Error) => {
       harness.log(`[claw-lite] ⚠ 自动更新失败：${err?.message || err}`)
     })
+    // 下载完成是自动更新闭环的唯一收口：autoInstallOnAppQuit 只在退出时静默安装，
+    // 用户在应用内拿不到任何反馈，链路等于断在半程。此处广播新事件，由渲染层
+    // 给出「立即重启并安装」入口（点击走 app:relaunch → app.relaunch() + app.quit()，
+    // dsh 子进程经 before-quit 被优雅停止）。
+    autoUpdater.on('update-downloaded', (info) => {
+      const version = info?.version || ''
+      harness.log(`[claw-lite] ✓ 更新已下载完成${version ? `（${version}）` : ''}，重启应用后安装`)
+      broadcast('updater:downloaded', { version })
+    })
     updater = autoUpdater
     return updater
   } catch {
@@ -403,7 +421,8 @@ function registerIpc(): void {
     const saved = store.save(patch)
     harness.settings = { ...harness.settings, ...patch }
     const snap = harness.snapshot()
-    broadcast('harness:state', snap)
+    // 与 harness.setState 一致：广播帧不背日志正文，日志由 harness:log 逐行送达
+    broadcast('harness:state', harness.snapshot(false))
     // 版本策略在保存时发生变化 → 立即开下载。与设置页「选定即下载」同源，
     // 兜住任何绕过渲染层预下载的路径（菜单、脚本、旧版渲染层）。
     // 下载本身异步且自带上报，不阻塞保存结果的返回。

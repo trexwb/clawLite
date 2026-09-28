@@ -80,6 +80,23 @@ interface ClawLiteUpdateResult {
   version?: string
 }
 
+/** 自动更新包下载完成事件（updater:downloaded 广播载荷，对齐 main.ts） */
+interface ClawLiteUpdateDownloaded {
+  version: string
+}
+
+/** 应用信息（app:info 返回值，对齐 electron/main.ts） */
+interface ClawLiteAppInfo {
+  name: string
+  version: string
+  platform: string
+  arch: string
+  electron: string
+  chrome: string
+  node: string
+  packaged: boolean
+}
+
 interface ClawLiteApi {
   /* 请求/响应 */
   snapshot(): Promise<ClawLiteSnapshot>
@@ -100,12 +117,13 @@ interface ClawLiteApi {
   pickDirectory(): Promise<string | null>
   checkUpdate(): Promise<ClawLiteUpdateResult>
   relaunch(): Promise<void>
-  appInfo(): Promise<Record<string, unknown>>
+  appInfo(): Promise<ClawLiteAppInfo>
 
   /* 事件订阅：返回取消订阅函数 */
   onState(handler: (snap: ClawLiteSnapshot) => void): () => void
   onLog(handler: (line: string) => void): () => void
   onVersionProgress(handler: (job: ClawLiteVersionJob) => void): () => void
+  onUpdateDownloaded(handler: (info: ClawLiteUpdateDownloaded) => void): () => void
 }
 
 interface Window {

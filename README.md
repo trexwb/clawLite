@@ -3,6 +3,15 @@
 **DeepSeek Harness 桌面宿主** —— 把官方 `@deepseek-ai/dsh` 本地化打包进 Electron 应用，
 用户安装后**无需单独安装 Node 环境**即可直接使用 dsh web。
 
+> **🔚 项目已收尾 · 后续不再更新（2026-09-28）**
+>
+> DeepSeek 官方已发布 **DeepSeek Harness 桌面版**（官方版本 `0.1.7-rc.2`，提供 Windows x64 与 macOS (Apple Silicon) 安装包），已覆盖本项目原有的「免装 Node 直接使用 dsh web」场景。
+>
+> 本项目（Claw Lite）的性质为**官方桌面版发布之前的自主研究探索**，**后续不再更新**：不再跟进 DSH 版本演进、不再发布新版安装包，应用版本号冻结在 **v1.0.2**。如需正式使用，请下载官方版本：
+>
+> - **Windows (x64)**：<https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-0.1.7-rc.2-win-x64.exe>
+> - **macOS (Apple Silicon)**：<https://download.deepseek.com/dsh-desk/bin/mac-arm64/deepseek-harness-0.1.7-rc.2-mac-arm64.dmg>
+
 ![Claw Lite 图标](app-icon.png)
 
 ## 为什么是 Electron
@@ -21,15 +30,18 @@
 - **自动捕获访问地址**：从 dsh 输出解析带 `token` 的完整 URL（Web UI 的信任凭据）
 - **两种打开方式**：应用内窗口（`persist:dsh-web` 分区，登录态留存）或系统浏览器
 - **运行时可配置**：端口、工作目录、DSH_HOME、开机自启、启动后是否自动打开界面
-- **自动更新**：electron-updater + GitHub Releases
+- **DSH 版本管理**：跟随 npm 最新版或锁定指定版本，下载进度实时可见、可取消，支持「清理未使用版本」释放磁盘
+- **界面崩溃自愈**：渲染进程异常退出后自动重载界面并留痕日志
+- **自动更新**：electron-updater + GitHub Releases；更新包下载完成后可直接在顶栏「立即重启并安装」
 
 ## 架构
 
 | 层 | 文件 | 职责 |
 |---|---|---|
 | 主进程 | `electron/main.ts` | 单实例锁、窗口、IPC 路由、菜单、生命周期、更新检查 |
-| 桥 | `electron/preload.ts` | `contextBridge` 暴露 `window.clawLite`（12 个方法 + 2 个事件） |
+| 桥 | `electron/preload.ts` | `contextBridge` 暴露 `window.clawLite`（17 个方法 + 4 个事件） |
 | 运行时托管 | `electron/harness.ts` | `HarnessManager`：dsh 子进程 spawn / 探活 / 日志 / 状态机 / 优雅停止 |
+| 版本管理 | `electron/version-fetch.ts` + `electron/version-download.ts` | 查 npm registry 版本、异步下载安装到 `userData/dsh-versions/`，与应用版本解耦 |
 | 设置 | `electron/settings.ts` | 配置持久化（userData/settings.json） |
 | 渲染层 | `src/` + `index.html` | Vite 构建到 `dist/`，深色控制台 UI |
 | 内置运行时 | `resources/dsh/` | `app/node_modules/@deepseek-ai/dsh` + `runtime.json` 清单 |

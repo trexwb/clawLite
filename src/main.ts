@@ -3,10 +3,13 @@
    ───────────────────────────────────────────────────────────────────
    与 Electron 主进程契约（preload 暴露的 window.clawLite）：
      方法  snapshot / start / stop / restart / verify / clearLogs
+           listVersions / pruneVersions / prepareVersion / applyVersion / cancelVersion
            saveSettings / open / pickDirectory / checkUpdate
            relaunch / appInfo
      事件  onState → Snapshot
            onLog   → String（单行，空串表示清屏）
+           onVersionProgress → VersionJob
+           onUpdateDownloaded → { version }（更新包已下载，可重启安装）
 
    类型声明见 src/env.d.ts（全局合并 Window.clawLite）。
    ═══════════════════════════════════════════════════════════════════ */
@@ -50,6 +53,7 @@ const el = {
   btnPickWs: byId<HTMLButtonElement>('btn-pick-ws'),
   btnClearLog: byId<HTMLButtonElement>('btn-clear-log'),
   btnUpdate: byId<HTMLButtonElement>('btn-update'),
+  btnInstallUpdate: byId<HTMLButtonElement>('btn-install-update'),
   infoRuntime: byId('info-runtime'),
   infoNode: byId('info-node'),
   infoDir: byId('info-dir'),
@@ -61,6 +65,7 @@ const el = {
   fDshVersion: byId<HTMLInputElement>('f-dsh-version'),
   btnToggleVersionList: byId<HTMLButtonElement>('btn-toggle-version-list'),
   btnRefreshVersions: byId<HTMLButtonElement>('btn-refresh-versions'),
+  btnPruneVersions: byId<HTMLButtonElement>('btn-prune-versions'),
   versionDropdown: byId('version-dropdown'),
   versionDropdownList: byId('version-dropdown-list'),
   versionDownload: byId('version-download'),
@@ -77,6 +82,7 @@ const el = {
   log: byId('log'),
   toast: byId('toast'),
   footVersion: byId('foot-version'),
+  footApp: byId('foot-app'),
 }
 
 // 端口策略：PORT_MIN/MAX/DEFAULT 来自 src/shared/constants.ts（单一来源），
@@ -256,6 +262,26 @@ function renderVersionDropdown(): void {
   }
 }
 
+/* 脏值写入助手：状态帧会高频到达，但这些字段绝大多数从不变动。
+   无差别赋值虽然大多被浏览器廉价短路，className / disabled 的重写却会
+   触发样式失效与重算；表单控件还得额外小心 selection 被重置。
+   写入前先比对，值相同就整个跳过。 */
+function setText(node: HTMLElement, value: string): void {
+  if (node.textContent !== value) node.textContent = value
+}
+function setClassName(node: HTMLElement, value: string): void {
+  if (node.className !== value) node.className = value
+}
+function setDisabled(node: HTMLButtonElement, value: boolean): void {
+  if (node.disabled !== value) node.disabled = value
+}
+function setInputValue(node: HTMLInputElement | HTMLSelectElement, value: string): void {
+  if (node.value !== value) node.value = value
+}
+function setChecked(node: HTMLInputElement, value: boolean): void {
+  if (node.checked !== value) node.checked = value
+}
+
 function render(snap: ClawLiteSnapshot | null | undefined): void {
   if (!snap) return
   snapshot = snap
@@ -265,56 +291,58 @@ function render(snap: ClawLiteSnapshot | null | undefined): void {
   const state = snap.state || 'stopped'
   const label = STATE_LABEL[state] || state
 
-  el.heroDot.className = `dot ${state}`
-  el.statusPill.className = `pill ${state}`
-  el.statusText.textContent = label
-  el.heroTitle.textContent = label
-  el.heroMsg.textContent = snap.message || '—'
+  setClassName(el.heroDot, `dot ${state}`)
+  setClassName(el.statusPill, `pill ${state}`)
+  setText(el.statusText, label)
+  setText(el.heroTitle, label)
+  setText(el.heroMsg, snap.message || '—')
 
-  el.urlText.textContent = snap.url || '—'
-  el.btnCopy.disabled = !snap.url
+  setText(el.urlText, snap.url || '—')
+  setDisabled(el.btnCopy, !snap.url)
 
   // 按钮可用性：停止过程中（state=stopping）同样视为忙碌，
   // 避免「停止→启动」重入产生孤儿 dsh 子进程与状态误判
   // （stopping 由主进程 stop() 置入，busy 才能覆盖整个停止窗口）。
   const busy = !!snap.starting || state === 'stopping'
-  el.btnStart.disabled = busy || snap.running || !snap.installed
+  setDisabled(el.btnStart, busy || snap.running || !snap.installed)
   // 启动探活最长 60s，「停止」在此期间必须可用：canStop 表示子进程已起、
   // 有信号可发，用于中止本次启动。
-  el.btnStop.disabled = state === 'stopping' || !(snap.running || (snap.starting && snap.canStop))
-  el.btnRestart.disabled = busy || !snap.installed
-  el.btnOpenWindow.disabled = !snap.running || !snap.url
-  el.btnOpenBrowser.disabled = !snap.running || !snap.url
-  el.btnInstall.disabled = busy
-  el.btnSave.disabled = busy
+  setDisabled(el.btnStop, state === 'stopping' || !(snap.running || (snap.starting && snap.canStop)))
+  setDisabled(el.btnRestart, busy || !snap.installed)
+  setDisabled(el.btnOpenWindow, !snap.running || !snap.url)
+  setDisabled(el.btnOpenBrowser, !snap.running || !snap.url)
+  setDisabled(el.btnInstall, busy)
+  setDisabled(el.btnSave, busy)
 
   // 运行信息
-  el.infoRuntime.textContent = snap.installed
-    ? `DSH ${snap.dshVersion || '未知'}`
-    : '未检测到内置运行时'
-  el.infoNode.textContent = snap.nodeVersion
-    ? `Node ${snap.nodeVersion} · ${snap.runtimeKind || 'Electron 内置'}`
-    : '—'
-  el.infoDir.textContent = snap.dshDir || '—'
-  el.infoHome.textContent = snap.dshHome || '—'
+  setText(
+    el.infoRuntime,
+    snap.installed ? `DSH ${snap.dshVersion || '未知'}` : '未检测到内置运行时'
+  )
+  setText(
+    el.infoNode,
+    snap.nodeVersion ? `Node ${snap.nodeVersion} · ${snap.runtimeKind || 'Electron 内置'}` : '—'
+  )
+  setText(el.infoDir, snap.dshDir || '—')
+  setText(el.infoHome, snap.dshHome || '—')
 
   // 设置（仅在未聚焦时回填，避免打断输入）
   const s = snap.settings || ({} as ClawLiteSettings)
-  if (document.activeElement !== el.fPort) el.fPort.value = String(s.port ?? PORT_DEFAULT)
-  if (document.activeElement !== el.fWorkspace) el.fWorkspace.value = s.workspace || ''
-  if (document.activeElement !== el.fDshHome) el.fDshHome.value = s.dshHome || ''
+  if (document.activeElement !== el.fPort) setInputValue(el.fPort, String(s.port ?? PORT_DEFAULT))
+  if (document.activeElement !== el.fWorkspace) setInputValue(el.fWorkspace, s.workspace || '')
+  if (document.activeElement !== el.fDshHome) setInputValue(el.fDshHome, s.dshHome || '')
   if (document.activeElement !== el.fDshVersion) {
     const pref = s.dshVersion || 'latest'
     const display = pref !== 'latest' ? pref : snap.dshVersion || pref
-    el.fDshVersion.value = display
+    setInputValue(el.fDshVersion, display)
     versionDisplay = display
     versionStored = pref
   }
   // 与其它字段一致：聚焦时不回填，避免用户正按方向键选择打开方式时被覆盖
-  if (document.activeElement !== el.fOpenMode) el.fOpenMode.value = s.openMode || 'window'
-  el.fAuto.checked = !!s.autoStart
+  if (document.activeElement !== el.fOpenMode) setInputValue(el.fOpenMode, s.openMode || 'window')
+  setChecked(el.fAuto, !!s.autoStart)
 
-  el.footVersion.textContent = snap.dshVersion ? `dsh ${snap.dshVersion}` : ''
+  setText(el.footVersion, snap.dshVersion ? `dsh ${snap.dshVersion}` : '')
 }
 
 // DOM 行数上限：长会话下日志节点只增不减会持续占用内存并拖慢渲染，
@@ -548,6 +576,35 @@ function bind(): void {
     })
   )
 
+  // 清理旧版本目录：dsh-versions 只增不减，多次切换后没有回收路径。
+  // keep 传「当前运行版本 + 进行中任务的版本」——前者是回退兜底，后者可能
+  // 刚下载完尚未切换（此时快照 dshVersion 仍是旧值），不排除会被当场删掉。
+  el.btnPruneVersions.addEventListener('click', () =>
+    guard(async () => {
+      const keep = [snapshot?.dshVersion, activeVersionJob?.version].filter(
+        (v): v is string => !!v
+      )
+      if (!window.confirm('将删除未使用的旧 DSH 版本目录以释放磁盘空间，此操作不可撤销，是否继续？'))
+        return
+      el.btnPruneVersions.disabled = true
+      el.btnPruneVersions.classList.add('busy')
+      el.btnPruneVersions.textContent = '清理中…'
+      try {
+        const res = await bridge().pruneVersions(keep)
+        if (res?.ok === false) {
+          toast(res.error || '清理旧版本失败', true)
+          return
+        }
+        const removed = res?.removed || []
+        toast(removed.length ? `已清理 ${removed.length} 个未使用版本` : '没有可清理的旧版本')
+      } finally {
+        el.btnPruneVersions.disabled = false
+        el.btnPruneVersions.classList.remove('busy')
+        el.btnPruneVersions.textContent = '清理未使用版本'
+      }
+    })
+  )
+
   // 版本号即时校验：不兼容版本拦截 + 列表外手输值弱提示
   el.fDshVersion.addEventListener('input', () => {
     updateSaveHint()
@@ -654,6 +711,16 @@ function bind(): void {
   )
 
   el.btnUpdate.addEventListener('click', () => guard(checkUpdate))
+
+  // 更新包已下载后的收口：重启应用并由安装包接管（app:relaunch → app.relaunch + app.quit）。
+  // 无需先手动停 DSH：主进程 before-quit 会优雅停止子进程。
+  el.btnInstallUpdate.addEventListener('click', () =>
+    guard(async () => {
+      setDisabled(el.btnInstallUpdate, true)
+      setText(el.btnInstallUpdate, '正在重启…')
+      await bridge().relaunch()
+    })
+  )
 }
 
 /* ── 自动更新 ──────────────────────────────────────────────────── */
@@ -674,6 +741,20 @@ async function checkUpdate(): Promise<void> {
     el.btnUpdate.disabled = false
     el.btnUpdate.textContent = '检查更新'
   }
+}
+
+/* ── 应用信息 ──────────────────────────────────────────────────── */
+
+/**
+ * 页脚展示应用自身版本与运行环境（app:info）。
+ * 只取一次：Electron / Node 版本在进程生命周期内不变，无需随状态帧刷新。
+ */
+async function loadAppInfo(): Promise<void> {
+  const info = await bridge().appInfo()
+  const bits = [`Claw Lite ${info.version || '未知'}`]
+  if (info.electron) bits.push(`Electron ${info.electron}`)
+  if (info.node) bits.push(`Node ${info.node}`)
+  setText(el.footApp, bits.join(' · '))
 }
 
 /* ── 启动 ──────────────────────────────────────────────────────── */
@@ -717,20 +798,27 @@ async function boot(): Promise<void> {
     })
     rebuildLog([])
     el.btnUpdate.classList.add('hidden')
+    el.btnInstallUpdate.classList.add('hidden')
     return
   }
 
   bridge().onState((snap) => {
-    // 需重建整段日志的两种情况：首次渲染，或主进程日志缓冲已从头部截断
-    // （缓冲区满后行数不再变化，只能靠首行变化识别，否则界面会残留过期行）
     const prevCount = snapshot?.logs?.length ?? -1
     const prevFirst = snapshot?.logs?.[0]
     render(snap)
+    // 日志区只在「主进程确实给了整段日志」时才重建。状态广播帧
+    // （setState / 地址捕获）不带日志正文，日常增量一律由 harness:log
+    // 逐行送达，所以这里绝大多数情况会直接返回。原先只要缓冲区满，
+    // 长度恒为 LOG_LIMIT 且首行不断滚动，truncated 会被判为恒真，
+    // 导致每个状态帧都清空并重建整片日志区（连同滚动位置一起被打掉）。
+    // 启动阶段的历史回填已移交 boot() 中的 rebuildLog(snap.logs)。
+    const logs = snap.logs
+    if (!logs || !logs.length) return
     const truncated =
       prevCount === -1 ||
-      snap.logs.length < prevCount ||
-      (snap.logs.length === prevCount && snap.logs[0] !== prevFirst)
-    if (truncated) rebuildLog(snap.logs)
+      logs.length < prevCount ||
+      (logs.length === prevCount && logs[0] !== prevFirst)
+    if (truncated) rebuildLog(logs)
   })
 
   // 下载进度走独立轻量通道：不随 harness:state 快照重传整段日志，
@@ -768,10 +856,32 @@ async function boot(): Promise<void> {
     logLine(line, classify(line))
   })
 
+  // 自动更新闭环的最后一跳：更新包下载完成后亮出「立即重启并安装」。
+  // 只在下发时机出现，不做常驻；重载界面会重置（届时重新检查更新即可）。
+  bridge().onUpdateDownloaded((info) => {
+    const version = info?.version || ''
+    el.btnInstallUpdate.classList.remove('hidden')
+    setText(el.btnInstallUpdate, version ? `立即重启并安装 ${version}` : '立即重启并安装')
+    toast(version ? `新版本 ${version} 已下载完成，可立即重启安装` : '更新包已下载完成，可立即重启安装')
+  })
+
   try {
-    render(await call('harness_snapshot'))
+    const snap = await call('harness_snapshot')
+    render(snap)
+    // harness:snapshot 是唯一携带整段日志的通道（状态广播帧不带），
+    // 界面首次加载 / Cmd+R 重载时用它回填历史日志；此后日常增量
+    // 全部由 harness:log 逐行追加。原先这段回填挂在「下一个状态帧到达」
+    // 这个时机上，广播帧不再带日志后必须改为显式执行，否则历史日志空白。
+    rebuildLog(snap?.logs)
   } catch (e) {
     toast(`读取运行状态失败：${errText(e)}`, true)
+  }
+
+  // 应用信息只影响页脚，失败时不打扰主流程（状态卡已能反映运行情况）
+  try {
+    await loadAppInfo()
+  } catch {
+    setText(el.footApp, '应用信息读取失败')
   }
 }
 
