@@ -157,15 +157,6 @@ function createMainWindow(): BrowserWindow {
     if (/^https?:/i.test(url)) shell.openExternal(url)
   })
 
-  // 渲染进程崩溃（OOM / 原生模块段错误等）后窗口只剩空白，Electron 不会自愈。
-  // 先写运行日志留痕（重载后渲染层会用它回填历史，用户能直接看到原因），
-  // 再 reload 重建渲染层——本应用界面对主进程状态零持有，重载即恢复。
-  win.webContents.on('render-process-gone', (_event, details) => {
-    harness.log(`[claw-lite] ⚠ 界面渲染进程异常退出（${details.reason}），正在重新加载界面`)
-    if (win.isDestroyed()) return
-    win.webContents.reload()
-  })
-
   return win
 }
 
@@ -272,6 +263,43 @@ function wireHarness(): void {
 
 type AppUpdater = import('electron-updater').AppUpdater
 
+/**
+ * 应用更新任务状态（渲染层更新提示面板的唯一数据源）。
+ *
+ * 更新策略（方案 C）：**只检测、不下载、不安装**。electron-updater 仅用来
+ * 查询 GitHub 上的最新版本号；命中新版本后由渲染层引导用户打开发布页手动
+ * 下载覆盖安装。这样彻底绕开 Squirrel.Mac 的签名 / 公证前置条件——未签名
+ * 包在 macOS 上即使下载成功也无法完成安装，后台静默失败且无 UI 反馈。
+ *
+ * phase 的取值必须与渲染层 UPDATE_PHASE_LABEL 的键一一对应。
+ */
+interface UpdateJob {
+  /** idle：无任务（未检查 / 已是最新 / 面板已收起）；available：检测到新版本；error：检测失败 */
+  phase: 'idle' | 'available' | 'error'
+  version: string
+  message: string
+  error: string
+}
+
+const IDLE_UPDATE_JOB: UpdateJob = {
+  phase: 'idle',
+  version: '',
+  message: '',
+  error: '',
+}
+
+let updateJob: UpdateJob = { ...IDLE_UPDATE_JOB }
+
+/** 新版本发布页：方案 C 下唯一的升级入口（手动下载覆盖安装） */
+const RELEASES_URL = 'https://github.com/trexwb/clawLite/releases/latest'
+
+/** 更新状态变更的唯一出口：更新内存态并广播轻量帧（无窗口时自动 no-op） */
+function publishUpdateJob(patch: Partial<UpdateJob>): UpdateJob {
+  updateJob = { ...updateJob, ...patch }
+  broadcast('updater:progress', updateJob)
+  return updateJob
+}
+
 async function getUpdater(): Promise<AppUpdater | null> {
   if (updater) return updater
   if (!app.isPackaged) return null
@@ -284,21 +312,31 @@ async function getUpdater(): Promise<AppUpdater | null> {
     }
     const autoUpdater = mod.autoUpdater ?? mod.default?.autoUpdater
     if (!autoUpdater) return null
-    autoUpdater.autoDownload = true
-    autoUpdater.autoInstallOnAppQuit = true
-    // 后台下载阶段若抛出 'error' 事件而无人监听，EventEmitter 会抛未处理异常
+    // 方案 C：只检测版本，绝不下载、绝不触发安装。
+    // autoDownload=false 让 checkForUpdates() 仅查询 latest.yml / latest-mac.yml
+    // 便返回 updateInfo，不再把安装包抓到本地缓存；
+    // autoInstallOnAppQuit=false 明确关闭「退出时自动装」，避免残留的
+    // Squirrel.Mac 收尾在半途静默失败（未签名包的安装必然失败）。
+    autoUpdater.autoDownload = false
+    autoUpdater.autoInstallOnAppQuit = false
+    // update-available 是唯一的「有新版本」信号源：据此点亮渲染层提示面板并
+    // 给出前往发布页的入口。此处不接 download-progress / update-downloaded，
+    // 因为整个下载与安装环节都已移出应用之外。
+    autoUpdater.on('update-available', (info: { version: string }) => {
+      harness.log(`[claw-lite] 发现新版本 ${info.version}，请前往发布页下载安装`)
+      publishUpdateJob({
+        ...IDLE_UPDATE_JOB,
+        phase: 'available',
+        version: info.version,
+        message: '新版本已发布，请前往发布页下载安装包覆盖安装',
+      })
+    })
+    // 检测阶段若抛出 'error' 事件而无人监听，EventEmitter 会抛未处理异常
     // 直接崩溃主进程；try/catch 只能覆盖 checkForUpdates() 的同步/await 段。
     autoUpdater.on('error', (err: Error) => {
-      harness.log(`[claw-lite] ⚠ 自动更新失败：${err?.message || err}`)
-    })
-    // 下载完成是自动更新闭环的唯一收口：autoInstallOnAppQuit 只在退出时静默安装，
-    // 用户在应用内拿不到任何反馈，链路等于断在半程。此处广播新事件，由渲染层
-    // 给出「立即重启并安装」入口（点击走 app:relaunch → app.relaunch() + app.quit()，
-    // dsh 子进程经 before-quit 被优雅停止）。
-    autoUpdater.on('update-downloaded', (info) => {
-      const version = info?.version || ''
-      harness.log(`[claw-lite] ✓ 更新已下载完成${version ? `（${version}）` : ''}，重启应用后安装`)
-      broadcast('updater:downloaded', { version })
+      const msg = String(err?.message || err)
+      harness.log(`[claw-lite] ⚠ 更新检测失败：${msg}`)
+      publishUpdateJob({ phase: 'error', error: msg, message: '更新检测失败，可稍后重试' })
     })
     updater = autoUpdater
     return updater
@@ -311,21 +349,71 @@ interface UpdateResult {
   ok: boolean
   message: string
   version?: string
+  /** 当前更新任务快照：渲染层据此点亮 / 收起更新提示面板 */
+  job?: UpdateJob
 }
 
 async function checkForUpdates(): Promise<UpdateResult> {
   const up = await getUpdater()
   if (!up) {
-    return { ok: false, message: '开发模式下不支持检查更新（需安装包运行）' }
+    return { ok: false, message: '开发模式下不支持检查更新（需安装包运行）', job: updateJob }
   }
   try {
     const result = await up.checkForUpdates()
-    if (!result || !result.updateInfo) return { ok: true, message: '当前已是最新版本' }
+    if (!result || !result.updateInfo) {
+      return { ok: true, message: '当前已是最新版本', job: updateJob }
+    }
     const latest = result.updateInfo.version
-    if (latest === app.getVersion()) return { ok: true, message: '当前已是最新版本' }
-    return { ok: true, message: `发现新版本 ${latest}，正在后台下载…`, version: latest }
+    if (latest === app.getVersion()) {
+      return { ok: true, message: '当前已是最新版本', job: updateJob }
+    }
+    // 'update-available' 帧可能晚于本次回执：直接把结果落到面板，
+    // 避免用户点完「检查更新」后看不到任何提示（autoDownload=false 时
+    // 不存在后续进度帧来补位）。
+    if (updateJob.phase !== 'available' || updateJob.version !== latest) {
+      publishUpdateJob({
+        ...IDLE_UPDATE_JOB,
+        phase: 'available',
+        version: latest,
+        message: '新版本已发布，请前往发布页下载安装包覆盖安装',
+      })
+    }
+    return {
+      ok: true,
+      message: `发现新版本 ${latest}，可前往发布页下载安装`,
+      version: latest,
+      job: updateJob,
+    }
   } catch (e) {
-    return { ok: false, message: `更新检查失败：${e instanceof Error ? e.message : String(e)}` }
+    return {
+      ok: false,
+      message: `更新检查失败：${e instanceof Error ? e.message : String(e)}`,
+      job: updateJob,
+    }
+  }
+}
+
+/**
+ * 前往下载：用系统浏览器打开发布页（方案 C 下唯一的升级入口）。
+ * 应用自身不做下载与安装——未签名包在 macOS 上无法完成 Squirrel 静默安装，
+ * 与其留一个永远走不通的自动通道，不如把用户明确引导到发布页。
+ */
+async function openUpdateDownload(): Promise<UpdateResult> {
+  const version = updateJob.version
+  const target = version ? `${version} ` : ''
+  try {
+    await shell.openExternal(RELEASES_URL)
+    harness.log(`[claw-lite] 已打开发布页，请手动下载 ${target}安装包覆盖安装`)
+    return {
+      ok: true,
+      message: `已打开下载页，请下载 ${target}安装包覆盖安装`,
+      version,
+      job: updateJob,
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    harness.log(`[claw-lite] ✗ 打开下载页失败：${msg}`)
+    return { ok: false, message: `打开下载页失败：${msg}`, job: updateJob }
   }
 }
 
@@ -421,8 +509,7 @@ function registerIpc(): void {
     const saved = store.save(patch)
     harness.settings = { ...harness.settings, ...patch }
     const snap = harness.snapshot()
-    // 与 harness.setState 一致：广播帧不背日志正文，日志由 harness:log 逐行送达
-    broadcast('harness:state', harness.snapshot(false))
+    broadcast('harness:state', snap)
     // 版本策略在保存时发生变化 → 立即开下载。与设置页「选定即下载」同源，
     // 兜住任何绕过渲染层预下载的路径（菜单、脚本、旧版渲染层）。
     // 下载本身异步且自带上报，不阻塞保存结果的返回。
@@ -453,6 +540,10 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('updater:check', () => checkForUpdates())
+
+  // 方案 C 的升级入口（渲染层「前往下载」按钮）：只打开发布页，
+  // 不触碰任何下载 / 安装逻辑。
+  ipcMain.handle('updater:open-download', () => openUpdateDownload())
 
   ipcMain.handle('app:relaunch', () => {
     // 用 app.quit() 而非 app.exit(0)：exit 不触发 before-quit，
@@ -614,11 +705,21 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== 'darwin') app.quit()
   })
 
+  // 退出前收尾 dsh 子进程。原实现对 stop() 之后直接 app.exit(0) 硬退，
+  // 会绕过整条 quit 事件链（quit 钩子、Squirrel/NSIS 的退出钩子等）被截断。
+  // 现改为收尾结束后重新 app.quit()，让退出流程继续走完。
+  // 方案 C 下应用不再承担任何安装收尾，stopOnce 只用于保证子进程收尾执行一次、
+  // 且收尾期间的重复退出请求不会并发收尾。
+  let stopOnce = false
   app.on('before-quit', async (e) => {
-    if (harness && harness.child) {
-      e.preventDefault()
-      await harness.stop()
-      app.exit(0)
+    if (stopOnce) return
+    if (!harness || !harness.child) {
+      stopOnce = true
+      return
     }
+    e.preventDefault()
+    stopOnce = true
+    await harness.stop()
+    app.quit()
   })
 }

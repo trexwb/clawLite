@@ -8,14 +8,13 @@
 
 ## 项目概述
 
-Claw Lite 是 DeepSeek Harness（dsh）的桌面宿主：内置 Electron 自带 Node 作为解释器，spawn 出 dsh web 子进程并提供启动/停止/重启、实时状态与日志流、访问地址捕获（含 Web UI 信任 token）、两种打开方式（应用内窗口 / 系统浏览器）、可配置端口/工作目录/DSH_HOME、开机自启与 electron-updater 自动更新。
+Claw Lite 是 DeepSeek Harness（dsh）的桌面宿主：内置 Electron 自带 Node 作为解释器，spawn 出 dsh web 子进程并提供启动/停止/重启、实时状态与日志流、访问地址捕获（含 Web UI 信任 token）、两种打开方式（应用内窗口 / 系统浏览器）、可配置端口/工作目录/DSH_HOME、开机自启，以及 electron-updater 版本检测（发现新版本后提示并引导到发布页手动下载覆盖安装，不自动安装）。
 
 **技术分层**：
-- **主进程**（`electron/` 下 `*.ts`，构建为 ESM 产物 `dist-electron/main.js`）：单实例锁、窗口、IPC 路由、DSH 生命周期调度、自动更新、菜单。
-- **桥**（`electron/preload.ts`）：`contextBridge` 暴露 `window.clawLite`（17 个方法 + 4 个事件），隔离渲染层与主进程。
+- **主进程**（`electron/` 下 `*.ts`，构建为 ESM 产物 `dist-electron/main.js`）：单实例锁、窗口、IPC 路由、DSH 生命周期调度、应用更新检测、菜单。
+- **桥**（`electron/preload.ts`）：`contextBridge` 暴露 `window.clawLite`（12 个方法 + 2 个事件），隔离渲染层与主进程。
 - **运行时托管**（`electron/harness.ts`）：`HarnessManager` 管理 dsh 子进程 spawn / 探活 / 日志 / 状态机 / 优雅停止。
 - **设置**（`electron/settings.ts`）：配置持久化到 `userData/settings.json`。
-- **版本管理**（`electron/version-fetch.ts` + `electron/version-download.ts`）：运行时按 npm registry 解析 / 下载指定 DSH 版本到 `userData/dsh-versions/<ver>/`，异步下载并上报进度，与应用版本解耦；跨进程共享常量（端口范围、日志上限等）在 `src/shared/constants.ts`。
 - **渲染层**（`src/` + `index.html`）：Vite 构建到 `dist/`，深色控制台 UI，纯原生 JS（**无前端框架**）。
 - **内置运行时**（`resources/dsh/`）：`app/node_modules/@deepseek-ai/dsh` + `runtime.json` 清单，随安装包分发（约 300MB，置于 asar 之外以保证 `.node` 原生模块以真实文件存在）。
 
@@ -32,8 +31,7 @@ Claw Lite 是 DeepSeek Harness（dsh）的桌面宿主：内置 Electron 自带 
 >   - `electron-builder.yml` 通过 `artifactName` 中的 `${version}` 引用（产物名 `Claw-Lite-${version}-${arch}.${ext}`）。
 >   - 自动更新（`electron/main.ts` 的 `checkForUpdates`）与 `app:info` 均通过 `app.getVersion()` 读取此值。
 >   - 本项目**无 Tauri / 无独立版本清单**，因此**唯一需要修改的版本位置就是 `package.json` 的 `version` 字段**（外加本文件「当前基准版本」便于人类核对）。
-> - **当前基准版本**：**v1.0.2**（**v1.0.1 已正式发布**；v1.0.2 为在研修订号，为项目收尾版本，尚未单独发布）。
-> - **🔚 项目已收尾（2026-09-28）**：DeepSeek 官方已发布 **DeepSeek Harness 桌面版**（官方版本 `0.1.7-rc.2`，Windows x64 / macOS arm64 安装包），本项目性质为**官方桌面版发布前的自主研究探索**，**后续不再更新**——不再跟进 DSH 版本演进、不再新增功能、**不再递增应用版本号，版本号冻结在 v1.0.2**。若用户在本仓库提出新增功能需求，应先提示项目已收尾并说明官方桌面版下载地址（详见 `README.md` 顶部说明），由用户决定是否继续。以下版本纪律在本项目收尾后**仅在用户明确要求时**适用。
+> - **当前基准版本**：**v1.0.2**（📝 待发布，见 `docs/version/RELEASE-v1.0.md`；此前的 v1.0.1 已正式发布）。该版本号**为用户明确指定的回退值**（由 1.1.0 回退至 1.0.2），按下方「版本回退 / 指定版本规则」以用户指令为准，不按次版本自动推进。标注「已正式发布」的版本为对外发布基线，未发布版本按正常语义化版本迭代推进。
 > - **发布后按语义化版本（SemVer）正常迭代**：每次迭代按改动性质推进对应位，不再需要「用户明确允许」作为前置条件。
 >   - **主版本（X.0.0）**：不向后兼容的破坏性变更。
 >   - **次版本（x.Y.0）**：向后兼容的新功能 / 新能力。
@@ -50,7 +48,7 @@ Claw Lite 是 DeepSeek Harness（dsh）的桌面宿主：内置 Electron 自带 
 - **渲染层为普通 Vite 模块构建**：本项目渲染层通过 `BrowserWindow` 加载（Electron 支持 `file://` 下的 `<script type="module">`），**不需要**像纯 `file://` SPA 那样强制 `iife` 或 `demoteModuleScripts()` 降级插件。改动 Vite 配置前必须确认不会破坏 `npm run build:web` 产物在 Electron 内的加载。
 - **产物验证标准**：修改后的项目必须在 `npm run build`（`build:electron` + `build:web`）成功后，经 `npm start`（或 `npm run dev` + `CLAWLITE_DEV_SERVER` + `npm run electron`）在 Electron 内完整加载并正常交互；自检必须 `npm run check` 全绿。
 - **源码后缀统一**：`electron/`、`scripts/`、`src/` 一律 `.ts`（禁止新增 `.cjs` / `.mjs` / `.js` 源码）；产物只落 `dist/`、`dist-electron/` 且一律 `.js`。主进程/preload 改动后必须重跑 `npm run build:electron`——运行时加载的是产物而非源码。`scripts/*.ts` 依赖 node 原生类型擦除直跑，故本机与 CI 需 node ≥ 24。
-- **禁止引入额外运行时依赖**：渲染层保持纯原生 JS（无 React/Vue/jQuery/lodash 等）；`dependencies` 仅保留 `electron-updater`（自动更新）与 `npm`（打包内置 npm CLI，供运行时 DSH 版本下载安装），主进程运行时代码只 `import` `electron` / `electron-updater` 与 Node 内置模块（`dependencies`/`devDependencies` 中不得出现 Tauri 残留，详见 `scripts/check.ts` §6）。
+- **禁止引入额外运行时依赖**：渲染层保持纯原生 JS（无 React/Vue/jQuery/lodash 等）；主进程仅允许 `electron` 与 `electron-updater` 作为运行时依赖（`dependencies`/`devDependencies` 中不得出现 Tauri 残留，详见 `scripts/check.ts` §6）。
 - **静态资源路径**：渲染层引用资源须使用相对路径；当前渲染层仅依赖 `src/styles/main.css` 与系统字体栈（无外部字体/图标 CDN），顶栏品牌图标引用项目图标资源 `build/icon.png`（由 Vite 构建时复制到 `dist/assets/`）。
 
 > 以上约束适用于所有 Sub-Agent（file-agent、browser-agent、computer-agent 等），无论其在何种上下文中执行任务，均不得以任何理由违反。
@@ -72,14 +70,15 @@ Claw Lite 是 DeepSeek Harness（dsh）的桌面宿主：内置 Electron 自带 
 
 - **进程模型**：主进程（`electron/main.ts`）↔ 桥（`electron/preload.ts`，`contextIsolation: true` / `nodeIntegration: false` / `sandbox: true`）↔ 渲染层（`src/main.ts`）。DSH 子进程由 `HarnessManager` 在**主进程** spawn，不进渲染层。
 - **IPC 契约（三层对齐，修改前必须确认）**：
-  - **方法（preload 暴露 → 渲染层调用，共 17 个）**：`snapshot` / `start` / `stop` / `restart` / `verify` / `clearLogs` / `listVersions` / `pruneVersions` / `prepareVersion` / `applyVersion` / `cancelVersion` / `saveSettings` / `open` / `pickDirectory` / `checkUpdate` / `relaunch` / `appInfo`
-  - **事件订阅（共 4 个）**：`onState → harness:state`（推送 `Snapshot`）/ `onLog → harness:log`（推送单行字符串，空串表示清屏）/ `onVersionProgress → harness:versionProgress`（推送 `VersionJob` 下载进度）/ `onUpdateDownloaded → updater:downloaded`（推送 `{ version }`，更新包已下载完成，渲染层据此亮出「立即重启并安装」入口）
-  - **主进程通道**（`ipcMain.handle`，共 17 个）：`harness:snapshot` / `harness:start` / `harness:stop` / `harness:restart` / `harness:verify` / `harness:clearLogs` / `harness:listVersions` / `harness:pruneVersions` / `harness:prepareVersion` / `harness:applyVersion` / `harness:cancelVersion` / `harness:saveSettings` / `harness:open` / `dialog:pickDirectory` / `updater:check` / `app:relaunch` / `app:info`
-  - **广播事件**（`main.ts` 的 `broadcast`）：`harness:state` / `harness:log` / `harness:versionProgress` / `updater:downloaded`
+  - **方法（preload 暴露 → 渲染层调用）**：`snapshot` / `start` / `stop` / `restart` / `verify` / `clearLogs` / `listVersions` / `pruneVersions` / `prepareVersion` / `applyVersion` / `cancelVersion` / `saveSettings` / `open` / `pickDirectory` / `checkUpdate` / `openUpdateDownload` / `relaunch` / `appInfo`
+  - **事件订阅**：`onState → harness:state`（推送 `Snapshot`）/ `onLog → harness:log`（推送单行字符串，空串表示清屏）/ `onVersionProgress → harness:versionProgress`（推送内置 DSH 版本下载 `VersionJob`）/ `onUpdateProgress → updater:progress`（推送应用更新 `UpdateJob`）
+  - **主进程通道**（`ipcMain.handle`）：`harness:snapshot` / `harness:start` / `harness:stop` / `harness:restart` / `harness:verify` / `harness:clearLogs` / `harness:listVersions` / `harness:pruneVersions` / `harness:prepareVersion` / `harness:applyVersion` / `harness:cancelVersion` / `harness:saveSettings` / `harness:open` / `dialog:pickDirectory` / `updater:check` / `updater:open-download` / `app:relaunch` / `app:info`
+  - **广播事件**（`main.ts` 的 `broadcast`）：`harness:state` / `harness:log` / `updater:progress`
 - **CSP（index.html）**：`<meta http-equiv="Content-Security-Policy">` 为 `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'`。**禁止**放宽到 `'unsafe-inline'` 脚本、`https:` connect 或外链脚本——保持仅加载本地 `self` 资源。其中 `style-src` 的 `'unsafe-inline'` 仅为 Vite 开发模式注入 `<style>`（HMR）保留，脚本侧不得放宽（`scripts/check.ts` §10 硬断言）。
 - **状态机**（`HarnessManager.state`）：`notInstalled` / `stopped` / `starting` / `stopping` / `running` / `error`，由 `setState()` 统一驱动并经 `harness:state` 广播。渲染层 `STATE_LABEL` 必须双向对应：既有文案（`setState` 取值 ⊆ 标签），也全部可达（标签 ⊆ `setState` 取值，多出来的即死枚举）。`scripts/check.ts` §7 对两个方向各有硬断言。`stopping` 由 `stop()` 置入并在收尾解除 `_stopping`；`starting` 与 `stopping` 期间渲染层均视为忙碌，其中启动探活阶段（子进程已起、快照 `canStop` 为真）**允许**点「停止」中止本次启动，其余操作仍禁用。
 - **DSH 启动关键细节（禁止移除）**：spawn 时必须带 `ELECTRON_RUN_AS_NODE=1`（以 Electron 可执行文件作纯 Node 解释器）且命令行首参为 `--expose-internals`（dsh 的 cordis-plugin-hmr 依赖 Node 内部 binding，缺失会导致 web profile 加载失败退出）；`--no-open` 避免 dsh 自行拉起浏览器。
 - **访问地址捕获**：dsh web 就绪时打印 `dsh web: http://127.0.0.1:<port>/?token=xxx`；`HarnessManager._captureUrl` 捕获该带 token 的完整 URL 作为 Web UI 信任凭据，**必须原样保留**（`token` 缺失会被拒）。
+- **应用更新策略（方案 C：只检测 + 引导手动下载，禁止改回自动安装）**：应用更新只做「版本检测」，**不下载、不安装**——`autoDownload = false` + `autoInstallOnAppQuit = false` 让 `checkForUpdates()` 只查询 GitHub 上的 `latest*.yml` 并返回版本号，不再把安装包抓到本地缓存。原因是 macOS 上 Squirrel.Mac 的落盘安装要求应用已签名 / 公证，本项目产物为未签名包，下载成功也必然在安装阶段静默失败。因此 `getUpdater()` 内只保留两个事件监听：`update-available`（**「有新版本」的唯一信号**，据此点亮提示面板并渲染版本号）/ `error`（失败必须落到 `updater:progress` 面板，不能只进日志）；**禁止**再接入 `download-progress` / `update-downloaded`，**禁止**调用 `quitAndInstall()`。`checkForUpdates()` 只负责发起检查并在回执中带回 `job` 快照；用户升级的唯一路径是 `updater:open-download` → `openUpdateDownload()` → `shell.openExternal(RELEASES_URL)` 打开 `https://github.com/trexwb/clawLite/releases/latest`，由用户手动下载覆盖安装。
 - **设置体系**：`userData/settings.json`（macOS：`~/Library/Application Support/Claw Lite/settings.json`），字段 `port`（默认 8799，范围 1024–65535，由 `harness.ts` 的 `PORT_MIN`/`PORT_MAX`/`PORT_DEFAULT` 单一来源导出）/ `autoStart` / `openMode`（`window`|`browser`）/ `workspace` / `dshHome` / `windowBounds`。
 
 ### 5. 文件结构
@@ -88,16 +87,12 @@ Claw Lite 是 DeepSeek Harness（dsh）的桌面宿主：内置 Electron 自带 
 clawLite/
 ├── electron/                     ← 主进程源码（TypeScript，构建为 dist-electron/*.js）
 │   ├── main.ts                  ← 入口：单实例锁、窗口、IPC 路由、菜单、生命周期、更新检查
-│   ├── preload.ts               ← contextBridge 桥（window.clawLite：17 方法 + 4 事件）
+│   ├── preload.ts               ← contextBridge 桥（window.clawLite：18 方法 + 4 事件）
 │   ├── harness.ts               ← HarnessManager：dsh 子进程 spawn/探活/日志/状态机/优雅停止
-│   ├── version-fetch.ts         ← DSH 版本解析与 npm 定位（查 registry 版本号，记忆化缓存）
-│   ├── version-download.ts      ← DSH 版本异步下载安装（spawn npm + 进度上报 + 可取消）
 │   └── settings.ts              ← 设置持久化（userData/settings.json）
 ├── src/                          ← 渲染层（Vite 构建到 dist/）
 │   ├── main.ts                   ← 控制台前端逻辑（与 window.clawLite 契约交互）
 │   ├── env.d.ts                  ← 全局类型声明（window.clawLite 桥契约）
-│   ├── shared/
-│   │   └── constants.ts          ← 跨进程共享常量（PORT_MIN/MAX/DEFAULT、LOG_LIMIT）
 │   └── styles/
 │       └── main.css              ← 深色控制台样式（CSS 变量 / 设计令牌在 :root）
 ├── resources/dsh/                ← 内置 DSH 运行时（app/ + runtime.json，约 300MB）
@@ -130,21 +125,18 @@ clawLite/
 | `HarnessManager.checkRuntime()` | harness.ts | 校验内置 DSH 运行时完整（入口与版本） |
 | `HarnessManager._captureUrl()` | harness.ts | 捕获带 token 的访问地址（信任凭据） |
 | `HarnessManager.dshVersion` | harness.ts | 读内置 DSH 运行时版本（不启动进程） |
-| `HarnessManager.listVersions()` | harness.ts | 列出 npm 上可用的 DSH 版本（供设置页下拉） |
-| `HarnessManager.prepareVersion()` / `applyVersion()` / `cancelVersion()` | harness.ts | 下载指定版本策略（`latest` 或锁定版本）→ 切换启动 / 取消下载 |
-| `HarnessManager.pruneVersions(keep)` | harness.ts | 清理 `userData/dsh-versions` 下 `keep` 之外的旧版本目录 |
-| `downloadVersion(opts)` | version-download.ts | 异步 spawn npm 安装依赖树到 `dsh-versions/<ver>/`，按帧上报进度 |
-| `fetchLatestVersion()` / `fetchAllVersions()` | version-fetch.ts | 查 npm registry 的最新 / 全部 DSH 版本号 |
-| `resolveNpmCli()` | version-fetch.ts | 定位应用内置 npm CLI（`resourcesPath/npm`） |
 | `registerIpc()` | main.ts | 注册全部 `ipcMain.handle` 通道 |
-| `broadcast()` | main.ts | 向主窗口广播 `harness:state` / `harness:log` / `harness:versionProgress` / `updater:downloaded`（不再外送 dsh Web UI 窗口） |
+| `broadcast()` | main.ts | 向主窗口广播 `harness:state` / `harness:log` / `updater:progress`（不再外送 dsh Web UI 窗口） |
 | `safeHarness(action)` | main.ts | 菜单项 / autoStart 调用的错误边界（内部 catch + 拒绝兜底） |
-| `checkForUpdates()` | main.ts | electron-updater 检查（仅打包态） |
+| `checkForUpdates()` | main.ts | electron-updater 仅检测版本（仅打包态），返回含任务快照的 `UpdateResult`，不触发下载 / 安装 |
+| `publishUpdateJob(patch)` | main.ts | 应用更新状态的唯一出口：更新 `updateJob` 并广播 `updater:progress` |
+| `openUpdateDownload()` | main.ts | 「前往下载」：`shell.openExternal(RELEASES_URL)` 打开发布页，引导用户手动覆盖安装 |
 | `createMainWindow()` / `openWebWindow()` | main.ts | 主窗口 / DSH Web UI 窗口 |
 | `SettingsStore.save/load` | settings.ts | 设置读写（userData/settings.json） |
-| `exposeInMainWorld('clawLite', …)` | preload.ts | 暴露 17 方法 + `onState`/`onLog`/`onVersionProgress`/`onUpdateDownloaded` |
+| `exposeInMainWorld('clawLite', …)` | preload.ts | 暴露 18 方法 + `onState`/`onLog`/`onVersionProgress`/`onUpdateProgress` |
 | `call(cmd, args)` / `COMMANDS` | src/main.ts | 渲染层命令 → preload 方法映射 |
 | `render(snap)` | src/main.ts | 渲染状态与设置回填 |
+| `renderUpdateJob(job)` | src/main.ts | 应用更新提示面板（新版本号 / 失败原因 / 「前往下载」可用性；无进度元素） |
 | `boot()` | src/main.ts | 启动：桌面环境绑定 IPC / 浏览器预览降级 |
 | `readPort()` | src/main.ts | 端口输入校验（与 `PORT_MIN`/`PORT_MAX` 同源，非法返回 null） |
 | `flushLog()` | src/main.ts | 日志帧内合并落 DOM（rAF 批处理 + 一次性裁剪与滚动） |
@@ -168,6 +160,7 @@ clawLite/
 - **设置回填**：仅在对应控件未聚焦时回填 `port`/`workspace`/`dshHome`/`openMode`，避免打断用户输入
 - **端口校验**：渲染层 `readPort()` 与 `harness.ts` 的 `PORT_MIN`/`PORT_MAX`、`index.html` 输入框 `min`/`max` 三方同源（1024–65535）；非法值显式报错，禁止 `Number(...) || 默认值` 式静默改写
 - **设置生效时机**：服务运行 / 启动探活期间保存设置时，toast 必须说明「将在下次启动 DSH 时生效」（端口等仅在下一次 spawn 读取）
+- **应用更新提示面板**：`#app-update` 完全由 `updater:progress` 帧驱动（`phase: idle` 即收起，不做本地状态推断）；`phase: available` 时展示新版本号并放开「前往下载」，`phase: error` 时展示失败原因；面板**不含**进度条 / 字节速率等下载元素（方案 C 只检测、不下载），失败提示同时走 toast，面板自身不设 `aria-live`（避免与状态主卡 `#hero-text` 争抢播报）；「稍后」仅收起本次提示，下次检查更新命中新版本时仍会重新弹出
 - **外部链接**：主窗口/`webWindow` 的 `setWindowOpenHandler` 将 `https?` 链接交 `shell.openExternal`，应用内不另开新窗
 
 ### 9. 数据流
@@ -183,6 +176,24 @@ clawLite/
                                                                   ↓
                                               渲染层 onState(snap) → render(snap)
                                               渲染层 onLog(line)  → logLine(classify)
+```
+
+应用更新数据流（方案 C：只检测 + 引导手动下载，走独立轻量通道）：
+
+```
+用户点「检查更新」→ checkUpdate → preload checkUpdate → ipcMain.handle('updater:check')
+                                                                  ↓
+                            getUpdater() 挂载的 update-available / error 两个监听
+                                                                  ↓
+                                  publishUpdateJob(patch) → broadcast('updater:progress', UpdateJob)
+                                                                  ↓
+                                              渲染层 onUpdateProgress(job) → renderUpdateJob(job)
+                                                                  ↓
+                    用户点「前往下载」→ openUpdateDownload → ipcMain.handle('updater:open-download')
+                                                                  ↓
+                          shell.openExternal(RELEASES_URL) → 浏览器打开 releases/latest
+                                                                  ↓
+                                    用户手动下载 dmg / exe 并覆盖安装（应用不参与安装）
 ```
 
 URL 捕获（带 token 的信任凭据）：
@@ -250,10 +261,10 @@ dsh 子进程 stdout → attachPipes → log(line) → _captureUrl(line) 匹配
 - **CSP 严守**：`index.html` 的 CSP 不得放宽到 `'unsafe-inline'` 脚本、`https:`/`ws:` connect 或外链脚本/字体/图片——仅加载 `self` 本地资源（`img-src`/`font-src` 允许 `data:`）
 - **contextIsolation**：主进程 `contextIsolation: true` + `nodeIntegration: false` + `sandbox: true` 不得关闭
 - **XSS 防护**：渲染层禁止 `innerHTML` 注入未转义内容；DOM 更新用 `textContent`/`createElement`
-- **无外部网络**：本项目不调用任何外部接口（DSH 子进程仅监听 `127.0.0.1`）；自动更新走 electron-updater 自有通道
+- **无外部网络**：本项目不调用任何外部接口（DSH 子进程仅监听 `127.0.0.1`）；应用更新走 electron-updater 自有通道**仅做版本检测**，产物下载引导交系统浏览器（`shell.openExternal`）完成
 - **受信任内容窗口导航加固**：加载 dsh web 的窗口除 `setWindowOpenHandler` 外**必须**同时挂 `will-navigate` 守卫，仅放行与 `harness.url` 同源的站内导航，其余一律 `preventDefault()` 并交系统浏览器——只防 `window.open` 防不住页内 self 导航。**主窗口（打包态加载 `dist/index.html`、开发态加载 `DEV_SERVER`）同样必须挂 `will-navigate` 守卫**，仅放行自身入口地址（打包态为 `dist/index.html` 本体，开发态为 `DEV_SERVER` 同源）；主窗口挂有 preload，一旦被导航到外部来源即等于交出 `window.clawLite` 暴露面。
-- **异步事件必须有 error 监听**：electron-updater 等基于 EventEmitter 的后台模块须挂 `autoUpdater.on('error', …)`，否则下载阶段异步 error 会以未处理异常击穿主进程（`try/catch` 覆盖不到）
-- **渲染进程崩溃自愈（禁止移除）**：主窗口必须挂 `render-process-gone` 监听——渲染进程崩溃（OOM / 原生模块段错误）后窗口只剩空白且 Electron 不会自动恢复；监听内先 `harness.log()` 写入运行日志留痕（重载后渲染层回填历史，用户可直接看到原因），窗口未销毁时再 `webContents.reload()` 重建界面。界面本身对主进程状态零持有，重载即恢复，无需用户重启应用。
+- **异步事件必须有 error 监听**：electron-updater 等基于 EventEmitter 的后台模块须挂 `autoUpdater.on('error', …)`，否则检查阶段的异步 error 会以未处理异常击穿主进程（`try/catch` 覆盖不到）。**方案 C 下 error 监听是更新的唯一失败出口**（仍须落到 `updater:progress` 面板 + 日志，禁止静默吞掉）
+- **退出链路禁止硬退**：`before-quit` 内 `e.preventDefault()` 收尾后必须重新 `app.quit()` 回到正常退出流程，**禁止 `app.exit(0)`**——硬退会跳过正常 quit 事件链，dsh 子进程收尾与窗口几何落盘等退出期动作随之失效（详见 §4「应用更新策略」）
 - **密钥/Token**：DSH Web UI 的访问 token 仅存于内存（`HarnessManager.url`），不落盘、不打印到日志以外的地方
 
 #### 11.6 性能规范

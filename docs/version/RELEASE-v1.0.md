@@ -6,61 +6,38 @@
 
 ---
 
-## v1.0.2 — 状态广播与日志渲染性能优化 + 功能闭环补齐（2026-09-28 · 📝 待发布 · 🔚 项目收尾版）
+## v1.0.2 — 应用更新策略改为方案 C（仅检测 + 引导手动下载）（2026-09-26 · 📝 待发布）
 
-- **日期**：2026-09-28
-- **状态**：📝 待发布 · 🔚 项目收尾版（本项目最后一个版本）
-- **版本号**：`package.json` 由 `1.0.1` → `1.0.2`（修订号：向后兼容的性能修复、功能缺口补齐与文档修正；无架构改动、无新增/移除依赖、无既有 IPC 签名改动）。
-  - 本次维护按用户指令将版本号**统一回退为 `1.0.2`**：同日曾因功能缺口补齐一度推进至 `1.0.3`，现该分节内容整体并入本分节；`package.json` / `package-lock.json` 根包、`AGENTS.md`、`README.md`、`CLAUDE.md`、`docs/version/` 中的版本表述一律以 `1.0.2` 为准，仓库内不再保留 `1.0.3` 表述。
-- **范围**：`electron/harness.ts`、`electron/main.ts`、`electron/preload.ts`、`src/main.ts`、`src/env.d.ts`、`index.html`、`scripts/build-electron.ts`、`package.json` / `package-lock.json`、`AGENTS.md`、`README.md`、`CLAUDE.md`、`docs/version/`
-- **说明**：本版包含两部分——①主进程状态广播与渲染层日志渲染的性能优化；②依据项目审查报告修复 7 项已确认问题（4 项功能闭环缺口 + 3 项框架/文档漂移）。**本版为项目收尾版本，发布后不再有后续迭代**（见下「项目收尾说明」）。
+- **日期**：2026-09-26
+- **状态**：📝 待发布
+- **版本号**：`package.json` 由 `1.0.1` → `1.0.2`（**用户明确指定版本号**：本次改动本身是向后兼容的功能变更，按 §0 语义化版本规则本应推进次版本，但按「版本回退 / 指定版本规则」以用户指令为准，统一按 `1.0.2` 记录，不按次版本推进）
+- **背景**：原自动更新链路为 `autoDownload = true` + `autoInstallOnAppQuit = true`，下载完成后由 `quitAndInstall()` 拉起 Squirrel.Mac 的 ShipIt 完成落盘安装。实测老版本应用能识别到 GitHub 上的新版本，但始终卡在「下载成功 → 安装」之间：`~/Library/Caches/com.trexwb.clawlite.ShipIt` 为空，electron-updater 自有缓存 `updaterCacheDirName/pending/` 内 `update-info.json` 与 `update.zip` 已就绪。根因是 macOS 上 Squirrel.Mac 的安装要求应用已签名 / 公证，而本项目产物为未签名包（`codesign` 显示 adhoc、`TeamIdentifier` 未设置，CI 显式 `CSC_IDENTITY_AUTO_DISCOVERY=false`），安装阶段必然静默失败。故改为「不依赖 Squirrel 自动安装」的方案 C：应用只负责检测与提示，升级由用户手动下载覆盖安装。
 
-### 项目收尾说明（🔚 后续不再更新）
+### 本期内容
 
-DeepSeek 官方已发布 **DeepSeek Harness 桌面版**（`deepseek-harness desktop`，官方版本 `0.1.7-rc.2`，提供 Windows x64 与 macOS (Apple Silicon) 安装包），官方桌面版已覆盖本项目原有的「免装 Node 直接使用 dsh web」场景。**本项目（Claw Lite）的性质为官方桌面版发布之前的自主研究探索，后续不再更新**——不再跟进 DSH 版本演进、不再新增功能、不再发布新版安装包，应用版本号冻结在 **v1.0.2**。如需正式使用，请下载官方版本：
+- **主进程（`electron/main.ts`）**：`autoUpdater.autoDownload` 与 `autoInstallOnAppQuit` 由 `true` 改为 `false`（`checkForUpdates()` 只查询 `latest*.yml` 取版本号，不再拉取安装包）；移除 `download-progress` / `update-downloaded` 监听与 `installUpdate()` / `quitAndInstall()` 调用；新增 `RELEASES_URL` 常量与 `openUpdateDownload()`（经 `shell.openExternal` 打开 `https://github.com/trexwb/clawLite/releases/latest`）；IPC 通道 `updater:install` 改为 `updater:open-download`；`UpdateJob` 任务模型收敛为 `idle | available | error` 三相并移除进度字段（`percent` / `bytesPerSecond` / `transferred` / `total`）；**保留** `update-available` 与 `error` 两个监听（error 仍落到 `updater:progress` 面板 + 应用日志），`checkForUpdates()` 仍在回执中带回 `job` 快照以避免「点完检查更新看不到提示」。退出链路无安装收尾依赖后回归简单形态：`before-quit` 收尾 dsh 子进程后重新 `app.quit()`，不再需要安装状态机。
+- **桥（`electron/preload.ts`）**：`installUpdate` 改为 `openUpdateDownload`（仍暴露 18 个方法），注释同步为「应用更新提示面板（方案 C）」。
+- **渲染层（`src/main.ts`）**：移除进度相关 DOM 引用与 `formatBytes()`；`UPDATE_PHASE_LABEL` 改为 `available` / `error` 两态；`renderUpdateJob(job)` 改为渲染新版本号与「前往下载」入口；按钮 `btnUpdateInstall`（重启并安装）改为 `btnUpdateDownload`（前往下载），点击调 `openUpdateDownload`；`checkUpdate` 回执直接渲染 `job`，`onUpdateProgress` 的可用态提示改走 toast。
+- **页面与样式（`index.html` / `src/styles/main.css`）**：`#app-update` 面板去掉进度条（`up-pct` / `up-bar` / `up-fill`），按钮改为「前往下载」+「稍后」；样式注释澄清该骨架同时服务内置 DSH 版本下载面板与应用更新提示面板。
+- **类型声明（`src/env.d.ts`）**：`ClawLiteUpdateJob` 移除进度字段、`phase` 收敛为 `idle | available | error`；`ClawLiteApi.installUpdate` 改为 `openUpdateDownload`。
+- **文档**：`AGENTS.md` §4「应用更新策略」整段改写（含「禁止改回自动安装」红线）、§4 IPC 契约清单、§6 函数表、§8 面板约定、§9 数据流图、§11.5 安全规范（error 监听口径与退出链路说明）、§0 当前基准版本同步为 **v1.0.2**（并注明为用户指定回退值）；`README.md` 功能项与「已知限制」补充方案 C 说明；`docs/wiki/Home.md` 与 `docs/wiki/架构总览.md` 表述同步；本分节按「一个主版本一个文件」规则落于本文件顶部，`docs/version/README.md` 索引同步为 v1.0 单文件口径。
 
-- **Windows (x64)**：<https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-0.1.7-rc.2-win-x64.exe>
-- **macOS (Apple Silicon)**：<https://download.deepseek.com/dsh-desk/bin/mac-arm64/deepseek-harness-0.1.7-rc.2-mac-arm64.dmg>
+### 版本记录说明
 
-> 收尾后如无用户明确指令，不再在本文件追加新分节；历史分节按「只增不改」原则保留。
-
-### 本期内容（一）功能闭环补齐与文档对齐（审查报告 7 项修复）
-
-- **自动更新闭环（功能缺口）**：`electron/main.ts` 在既有 `autoUpdater.on('error')` 之外补 `autoUpdater.on('update-downloaded')`——写运行日志并广播新事件 `updater:downloaded`（携带 `{ version }`）；`electron/preload.ts` 新增订阅方法 `onUpdateDownloaded`；`index.html` 顶栏新增默认隐藏的「立即重启并安装」按钮，渲染层收到广播后亮出，点击调用此前已存在但无入口的 `relaunch()`（`app:relaunch` → `app.relaunch() + app.quit()`，dsh 子进程经 `before-quit` 优雅停止）。原先 `autoInstallOnAppQuit` 只在退出时静默安装，应用内无任何反馈，链路断在半程。
-- **版本清理入口（功能缺口）**：版本管理区新增「清理未使用版本」按钮，调用已实现但无调用方的 `harness:pruneVersions`；`keep` 传「当前运行版本 + 下载中任务的版本」（后者可能已下载完成尚未切换，不能当场删除），点击前 `window.confirm` 二次确认，结果以 toast 反馈（`已清理 N 个未使用版本` / `没有可清理的旧版本`）。
-- **应用信息展示（功能缺口）**：页脚在原有 DSH 版本之外新增 `#foot-app`，由 `app:info` 填充「Claw Lite 版本 · Electron 版本 · Node 版本」；仅在启动时读取一次（进程生命周期内不变），失败不打断主流程，降级为「应用信息读取失败」占位。
-- **渲染进程崩溃恢复（功能缺口）**：`createMainWindow()` 补 `render-process-gone` 监听——渲染进程崩溃（OOM / 原生模块段错误）后窗口只剩空白且 Electron 不会自愈；监听内先 `harness.log()` 写入运行日志留痕（重载后渲染层回填历史，原因可直接在界面看到），窗口未销毁时 `webContents.reload()` 重建界面（界面对主进程状态零持有，重载即恢复）。
-- **构建目标修正（框架漂移）**：`scripts/build-electron.ts` 的 esbuild `target` 由 `node22` 改为 `node24`，注释同步为实测的「Electron 44 内置 Node（24.x，实测 24.21.0）」（原注释与实测不符）。本机 esbuild 支持 `node24` 目标，构建验证通过。
-- **`engines` 声明（框架漂移）**：`package.json` 新增 `"engines": { "node": ">=24.0.0" }`，与 README「前置要求：Node ≥ 24」及 `scripts/*.ts` 依赖 node 原生类型擦除直跑的事实对齐。
-- **`AGENTS.md` 滞后修订（文档漂移）**：preload 暴露面「12 方法 + 2 事件」修正为 17 方法 + 4 事件；§4 IPC 契约补齐版本管理 5 方法与 `onVersionProgress` / `onUpdateDownloaded` 订阅，广播清单补 `harness:versionProgress` / `updater:downloaded`；§5 目录树与 §6 清单补 `electron/version-fetch.ts`、`electron/version-download.ts`、`src/shared/constants.ts` 及 `HarnessManager.listVersions/prepareVersion/applyVersion/cancelVersion/pruneVersions`、`downloadVersion`、`fetchLatestVersion/fetchAllVersions`、`resolveNpmCli`；§1 依赖表述由「仅 electron 与 electron-updater」修正为与 `package.json` 实际依赖（`electron-updater` + `npm`）一致；§11.5 新增「渲染进程崩溃自愈（禁止移除）」条目；§0「当前基准版本」同步为 v1.0.2，并补「项目已收尾（版本号冻结）」说明。
-- **`README.md` 同步**：架构表桥的暴露面计数修正为 17 方法 + 4 事件、补「版本管理」一行；功能清单补「DSH 版本管理」「界面崩溃自愈」，自动更新条目补「立即重启并安装」入口。
-- **`package-lock.json` 同步**：根包 `name`/`version` 字段由 `1.0.1`（此前版本号提升时漏同步）更新为 `1.0.2`，与 `package.json` 保持一致；未新增/变更任何依赖及其版本。
-
-### 本期内容（二）状态广播与日志渲染性能优化
-
-- **状态广播帧不再携带日志正文**：`HarnessManager.snapshot()` 新增 `includeLogs` 参数（默认 `true`，保持请求/响应式通道语义不变）；`setState()` 与 `_captureUrl()` 这两条高频推送路径改用 `snapshot(false)`，`electron/main.ts` 中 `harness:saveSettings` 的广播同步调整为 `harness.snapshot(false)`。日志本身始终由独立的 `harness:log` 逐行通道送达，原先每帧额外重复搬运一份完整缓冲。
-- **`dshVersion` 读取改为记忆化**：新增 `_versionCache` / `_versionCacheRoot`，以运行时根目录为缓存键；仅在读取成功时写入，目录变化（切换版本）自动失效。此前每次 `snapshot()` 会做 2 次 `readFileSync` + `JSON.parse`（同一份 package.json 被 `checkRuntime()` 与快照字段各读一次）。
-- **渲染层日志区不再逐帧全量重建**：`onState` 的重建判断改为「仅当主进程确实给了整段日志」才执行。原先缓冲区满后长度恒为 `LOG_LIMIT` 且首行不断滚动，`truncated` 被判为恒真，导致每个状态帧都清空并重建整片日志区（连带打掉用户滚动位置）。
-- **历史日志回填改由 `boot()` 显式执行**：广播帧不再带日志后，原先「靠下一个状态帧顺便回填历史日志」的时机失效，`harness:snapshot` 的返回值处显式调用 `rebuildLog(snap.logs)`，保证界面加载与重载后历史日志仍完整。
-- **`render()` 改为脏值写入**：新增 `setText` / `setClassName` / `setDisabled` / `setInputValue` / `setChecked` 五个写入助手，赋值前先比对，值未变则跳过，消除每帧无谓的样式失效与表单控件写入。
+- 本分节内容原记于 `1.1.0` 分节（独立文件 `RELEASE-v1.1.md`）。版本号按用户指令回退为 `1.0.2` 后，该文件按命名规则 `RELEASE-v{主版本}.md` 已并入本文件，v1.1 分节不再保留；`docs/version/README.md` 的命名规则示例与日志索引同步修正。
 
 ### 未改动项（明确区分，避免误改）
 
-- **架构与依赖**：未新增 / 移除任何依赖；`electron-builder.yml`、`.github/workflows/release.yml`、`vite.config.ts`、`index.html` 的 CSP、`resources/dsh` 内置运行时（`DSH_VERSION` 仍为 `0.1.5-rc.3`）均未改动。
-- **既有 IPC 契约**：`harness:*` / `dialog:pickDirectory` / `updater:check` / `app:relaunch` / `app:info` 的通道名、参数与返回值均未变，仅新增 `updater:downloaded` 广播与 `onUpdateDownloaded` 订阅（只增不改）；`window.clawLite` 契约与 `src/env.d.ts` 类型声明随新增项同步，无删改。
-- **状态机与下载阶段枚举**：`HarnessState` 六态与 `DOWNLOAD_PHASES` 七阶段取值不变，仅调整快照构造时的负载。
-- **`electron/harness.ts` 版本管理实现**：`pruneVersions` 等既有实现未改动，本版只补调用入口（按钮）与文档。
-- **`resources/dsh` 内置运行时**：`fetch-runtime.ts` 的 `DSH_VERSION` 与依赖树 `package.json` 版本均未改动。
-- **构建脚本**：`scripts/build-electron.ts` 仅调整 esbuild `target`（`node22` → `node24`）与注释，构建流程与产物结构未变。
-- **项目状态**：无 `git commit`，改动保持未提交状态。
+- **`dist-electron/` 与 `dist/` 产物**：不手改，均由 `npm run build` 重新生成。
+- **`electron-builder.yml` 的 `publish` 段**：仍保留 `provider: github`（owner `trexwb` / repo `clawLite`），方案 C 仍依赖它读取 `latest*.yml` 做版本比对，未改动。
+- **内置 DSH 运行时版本**：`scripts/fetch-runtime.ts` 的 `DSH_VERSION` 维持 `0.1.5-rc.3`，与应用版本相互独立。
+- **内置 DSH 依赖树自身的 `package.json` 的 `version`**：`resources/dsh/app/package.json` 与 `resources/dsh/app/node_modules/@deepseek-ai/dsh/package.json` 均保持原值。
+- **`scripts/check.ts`**：未改动；本次变更后 IPC 三层对齐、状态枚举双向可达等既有门禁仍全绿。
 
 ### 验证
 
-- `npm run check` **全部通过 ✔**：51 项全绿（含 `tsc --noEmit` 类型检查、IPC 三层对齐 `17 个通道 / 4 个事件 / 21 个方法`、状态枚举与下载阶段双向可达、安全与无障碍基线），无失败无告警。
-- `npm run build`（`build:electron` + `build:web`）成功：`dist-electron/main.js` 53.4kb（ESM）、`dist-electron/preload.js` 2.1kb（CJS）、`dist/assets/index-*.js` 14.73 kB、`dist/assets/index-*.css` 10.50 kB、`dist/index.html` 10.84 kB，构建耗时 54ms。
-- `npm run verify:dist` **产物校验通过 ✔**：`dist/index.html` 存在、资源引用为相对路径、品牌图标已产出并被引用。
-- 性能实测见 `docs/perf-audit-2026-09-28.md`（含测量口径与受限说明）。
-- 版本一致性：`package.json` / `package-lock.json`（根包）均为 `1.0.2`，`AGENTS.md` §0、`README.md`、`CLAUDE.md`、`docs/version/` 表述同步为 `v1.0.2`，仓库内已无 `1.0.3` 残留表述（第三方依赖版本号 `1.0.3` 不属应用版本，未改动）。
+- `npm run build`（`build:electron` + `build:web`）✔
+- `npm run check`（JSON / 关键文件 / 源码后缀门禁 / `tsc --noEmit` / IPC 三层对齐 / 状态枚举双向可达 / 日志着色与 CSS 交叉 / 端口范围一致 / 安全与无障碍基线 / 产物模块形态）✔
 
 ---
 

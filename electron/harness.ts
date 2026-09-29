@@ -184,37 +184,19 @@ export class HarnessManager extends EventEmitter {
     return custom || path.join(this.userDataDir, 'dsh-home')
   }
 
-  /** dshVersion 缓存键所属的运行时根目录；仅在读取成功时写入 */
-  private _versionCacheRoot: string | null = null
-  /** dshVersion 缓存值 */
-  private _versionCache = ''
-
-  /** dsh 依赖树版本（读 package.json，不启动进程）
-   *  记忆化：snapshot() 每次都会读本 getter，且 checkRuntime() 内还会再读一次，
-   *  未缓存时每一帧状态广播都要做 2 次同步 readFileSync + JSON.parse。
-   *  仅在成功路径写入缓存 —— 运行时尚未安装时若缓存空结果，
-   *  verify 装上之后就再也感知不到新值了。root 变化（切换版本目录）自动失效。
-   */
+  /** dsh 依赖树版本（读 package.json，不启动进程） */
   get dshVersion(): string {
-    const root = this.dshRoot
-    if (this._versionCacheRoot === root) return this._versionCache
     try {
       const p = path.join(
-        root,
+        this.dshRoot,
         'app',
         'node_modules',
         '@deepseek-ai',
         'dsh',
         'package.json'
       )
-      const v = (JSON.parse(fs.readFileSync(p, 'utf8')) as { version?: string }).version || ''
-      this._versionCacheRoot = root
-      this._versionCache = v
-      return v
+      return (JSON.parse(fs.readFileSync(p, 'utf8')) as { version?: string }).version || ''
     } catch {
-      // 失败不写缓存，保持下一次仍会重试读取
-      this._versionCacheRoot = null
-      this._versionCache = ''
       return ''
     }
   }
@@ -536,9 +518,7 @@ export class HarnessManager extends EventEmitter {
   setState(state: HarnessState, message?: string): void {
     this.state = state
     if (message !== undefined) this.message = message
-    // 广播帧不带日志正文：日志逐行走 harness:log 通道，重复携带会让每一帧
-    // 都多做一次 800 元素数组复制 + IPC 结构化克隆，并迫使渲染层全量重建日志区
-    this.emit('state', this.snapshot(false))
+    this.emit('state', this.snapshot())
   }
 
   log(line: unknown): void {
@@ -561,7 +541,7 @@ export class HarnessManager extends EventEmitter {
     const found = (tagged ? tagged[1] : generic ? generic[0] : '').replace(/[),.;'"]+$/, '')
     if (!found || found === this.url) return
     this.url = found
-    this.emit('state', this.snapshot(false))
+    this.emit('state', this.snapshot())
   }
 
   clearLogs(): void {
@@ -569,13 +549,7 @@ export class HarnessManager extends EventEmitter {
     this.emit('log', '')
   }
 
-  /**
-   * 构造状态快照。
-   * @param includeLogs 是否附带完整日志正文。默认 true —— 请求/响应式通道
-   *   （harness:snapshot）需要它做界面重载后的日志回填；广播式推送一律传 false，
-   *   避免每帧重复搬运 LOG_LIMIT 行日志。
-   */
-  snapshot(includeLogs = true): Snapshot {
+  snapshot(): Snapshot {
     const installed = this.checkRuntime().ok
     return {
       installed,
@@ -597,7 +571,7 @@ export class HarnessManager extends EventEmitter {
       settings: { ...this.settings },
       // 版本下载任务快照：界面刷新/重载后据此恢复进度条，无需额外查询
       versionJob: this.versionJob ? { ...this.versionJob } : null,
-      logs: includeLogs ? [...this.logs] : [],
+      logs: [...this.logs],
     }
   }
 

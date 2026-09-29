@@ -74,27 +74,26 @@ interface ClawLiteSnapshot {
   logs: string[]
 }
 
+/**
+ * 应用更新任务状态（对齐 electron/main.ts 的 UpdateJob）。
+ * 更新策略为方案 C：只检测、不下载、不安装，故不存在任何进度字段。
+ * phase 的取值由主进程决定，必须与渲染层 UPDATE_PHASE_LABEL 的键一一
+ * 对应；状态帧走独立轻量通道 updater:progress，不随快照重传。
+ */
+interface ClawLiteUpdateJob {
+  /** idle：无任务（未检查 / 已是最新 / 面板已收起）；available：检测到新版本；error：检测失败 */
+  phase: 'idle' | 'available' | 'error'
+  version: string
+  message: string
+  error: string
+}
+
 interface ClawLiteUpdateResult {
   ok?: boolean
   message?: string
   version?: string
-}
-
-/** 自动更新包下载完成事件（updater:downloaded 广播载荷，对齐 main.ts） */
-interface ClawLiteUpdateDownloaded {
-  version: string
-}
-
-/** 应用信息（app:info 返回值，对齐 electron/main.ts） */
-interface ClawLiteAppInfo {
-  name: string
-  version: string
-  platform: string
-  arch: string
-  electron: string
-  chrome: string
-  node: string
-  packaged: boolean
+  /** 当前更新任务快照：渲染层据此点亮 / 收起更新提示面板 */
+  job?: ClawLiteUpdateJob
 }
 
 interface ClawLiteApi {
@@ -116,14 +115,17 @@ interface ClawLiteApi {
   open(mode: string): Promise<boolean>
   pickDirectory(): Promise<string | null>
   checkUpdate(): Promise<ClawLiteUpdateResult>
+  /** 打开 GitHub 发布页，由用户手动下载安装包覆盖安装（方案 C 升级入口） */
+  openUpdateDownload(): Promise<ClawLiteUpdateResult>
   relaunch(): Promise<void>
-  appInfo(): Promise<ClawLiteAppInfo>
+  appInfo(): Promise<Record<string, unknown>>
 
   /* 事件订阅：返回取消订阅函数 */
   onState(handler: (snap: ClawLiteSnapshot) => void): () => void
   onLog(handler: (line: string) => void): () => void
   onVersionProgress(handler: (job: ClawLiteVersionJob) => void): () => void
-  onUpdateDownloaded(handler: (info: ClawLiteUpdateDownloaded) => void): () => void
+  /** 应用更新状态（检测到新版本 / 检测失败），独立轻量通道 */
+  onUpdateProgress(handler: (job: ClawLiteUpdateJob) => void): () => void
 }
 
 interface Window {

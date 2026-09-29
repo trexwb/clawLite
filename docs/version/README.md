@@ -1,7 +1,7 @@
 # 版本迭代日志
 
 > 本目录专门存储 Claw Lite 每次升级迭代的发布日志。
-> 命名规则：`RELEASE-v{主版本}.md`（如 v1.0.x → RELEASE-v1.0.md，v1.1.x → RELEASE-v1.1.md）
+> 命名规则：`RELEASE-v{主版本}.md`（如 v1.0.x → RELEASE-v1.0.md）
 >
 > **版本纪律（与 AGENTS.md §0 严格对齐）**：
 > - 版本号单一来源：`package.json` 的 `version` 字段（electron-builder `${version}` 与 `app.getVersion()` 均读此值）
@@ -9,8 +9,6 @@
 > - 每次迭代都必须递增版本号，并在对应主版本文件顶部追加发布日志分节（标注日期与版本号）；历史日志只增不改
 > - 用户明确要求「本次不改版本号」或要求回退到指定版本号时，`package.json` 的 `version` 以用户指定值为准，日志注明"不推进版本号"
 > - **独立维度**：内置 DSH 运行时版本由 `scripts/fetch-runtime.ts` 的 `DSH_VERSION` 决定，与应用版本相互独立；内置 DSH 依赖树自身的 `package.json`（`resources/dsh/app/package.json` 与 `resources/dsh/app/node_modules/@deepseek-ai/dsh/package.json`）的 `version` 字段不属于应用版本，不得随应用版本改动
->
-> **🔚 项目已收尾（2026-09-28）**：DeepSeek 官方已发布桌面版（`deepseek-harness desktop 0.1.7-rc.2`，Windows x64 / macOS arm64 安装包），本项目为官方桌面版发布前的自主研究探索，**后续不再更新**，应用版本号**冻结在 v1.0.2**、不再递增（官方下载地址见根目录 `README.md` 顶部）。
 
 ---
 
@@ -18,7 +16,7 @@
 
 | 文件 | 覆盖版本 | 状态 |
 |------|---------|------|
-| [v1.0 日志](RELEASE-v1.0.md) | **当前基准 v1.0.2**（v1.0.1 正式发布后的性能修复与功能闭环补齐，项目收尾版本） | 📝 待发布 · 🔚 项目收尾 |
+| [v1.0 日志](RELEASE-v1.0.md) | v1.0.0 初始基线、v1.0.1（版本纪律切换）、**当前基准 v1.0.2**（应用更新策略改为方案 C：仅检测 + 引导手动下载） | ✅ 已发布（最新 v1.0.2 分节 📝 待发布） |
 
 ---
 

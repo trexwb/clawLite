@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld('clawLite', {
   open: (mode: string) => ipcRenderer.invoke('harness:open', mode),
   pickDirectory: () => ipcRenderer.invoke('dialog:pickDirectory'),
   checkUpdate: () => ipcRenderer.invoke('updater:check'),
+  /* 方案 C：自身不做下载 / 安装，仅打开 GitHub 发布页引导用户手动覆盖安装 */
+  openUpdateDownload: () => ipcRenderer.invoke('updater:open-download'),
   relaunch: () => ipcRenderer.invoke('app:relaunch'),
   appInfo: () => ipcRenderer.invoke('app:info'),
 
@@ -50,5 +52,6 @@ contextBridge.exposeInMainWorld('clawLite', {
   onState: (handler: (snap: unknown) => void) => on('harness:state', handler),
   onLog: (handler: (line: string) => void) => on('harness:log', handler),
   onVersionProgress: (handler: (job: unknown) => void) => on('harness:versionProgress', handler),
-  onUpdateDownloaded: (handler: (info: unknown) => void) => on('updater:downloaded', handler),
+  /* 应用更新状态：独立轻量通道，渲染层只据此刷新更新提示面板 */
+  onUpdateProgress: (handler: (job: unknown) => void) => on('updater:progress', handler),
 })
